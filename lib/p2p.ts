@@ -1,7 +1,11 @@
 // P2P Quake API parser & fetcher (Japan domestic, JMA-based feed).
 //
 // Upstream (public, no auth):
-//   https://api.p2pquake.net/v2/history?codes=551&limit=300
+//   https://api.p2pquake.net/v2/history?codes=551&limit=100
+//
+// (limit caps at 100 — codes>100 returns HTTP 400. Verified 2026-05-07.
+// codes=551 = "earthquake info" reports issued by JMA. Other codes are
+// peer-status/tsunami/etc and don't carry hypocenter data we need.)
 //
 // Why we use this for the Japan view: USGS's all_day feed catches ~1-3 quakes
 // in/around Japan per day (M ≥ ~2.5). P2P relays JMA's official feed which
@@ -49,7 +53,7 @@ interface P2PEntry {
   earthquake?: P2PEarthquake;
 }
 
-const P2P_URL = "https://api.p2pquake.net/v2/history?codes=551&limit=300";
+const P2P_URL = "https://api.p2pquake.net/v2/history?codes=551&limit=100";
 
 /**
  * Parse "YYYY/MM/DD HH:MM:SS[.fff]" interpreted as JST (UTC+9) into unix ms.
@@ -154,9 +158,19 @@ export function parseP2P(json: unknown): Quake[] {
 }
 
 /**
- * Fetch P2P feed (server-side). Returns Quake[] sorted desc by time_ms,
- * filtered to last 24h to match the USGS all_day window so density looks
- * comparable in the UI.
+ * Fetch P2P feed (server-side). Returns Quake[] sorted desc by time_ms.
+ *
+ * Note on window: the USGS all_day feed uses a 24h window. P2P's `codes=551`
+ * (JMA earthquake reports) only fires when JMA issues a felt-observation
+ * report — typically ~5-15 events/day in Japan, but quiet days produce <5.
+ * To keep the Japan view "alive" instead of mostly empty on calm days, we
+ * return the most recent ~100 events regardless of age (the API caps at
+ * limit=100). This typically spans 7-14 days of seismic activity. The ring
+ * animation only fires for events the client first SEES live (RING_LIFETIME
+ * is 90s after first poll), so older events render as quiet persistent dots.
+ *
+ * If P2P starts returning >100 events/day or we want a strict 24h window, add
+ * a `?recent=true` flag and filter here.
  */
 export async function fetchP2PJapanQuakes(): Promise<Quake[]> {
   const res = await fetch(P2P_URL, {
@@ -173,8 +187,6 @@ export async function fetchP2PJapanQuakes(): Promise<Quake[]> {
   }
   const json = await res.json();
   const all = parseP2P(json);
-  const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-  const last24h = all.filter((q) => q.time_ms >= cutoff);
-  last24h.sort((a, b) => b.time_ms - a.time_ms);
-  return last24h;
+  all.sort((a, b) => b.time_ms - a.time_ms);
+  return all;
 }

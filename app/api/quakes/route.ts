@@ -90,6 +90,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (source === "p2p") {
+    let p2pErrMsg = "";
     try {
       const quakes = await fetchP2PJapanQuakes();
       // Empty array from upstream = treat as failure (something's wrong with
@@ -101,7 +102,11 @@ export async function GET(req: NextRequest) {
       }
       cache.p2p = { ts: now, quakes };
       return jsonResponse(quakes, { "X-Quake-Source": "p2p" });
-    } catch {
+    } catch (err) {
+      const e = err as Error & { cause?: { code?: string } };
+      p2pErrMsg = `${e.name}: ${e.message}${
+        e.cause?.code ? ` (${e.cause.code})` : ""
+      }`;
       // Fall back to USGS — never make the user see a broken UI.
       try {
         let usgsQuakes: Quake[];
@@ -114,6 +119,7 @@ export async function GET(req: NextRequest) {
         return jsonResponse(usgsQuakes, {
           "X-Quake-Source": "usgs",
           "X-Quake-Fallback": "p2p-failed-using-usgs",
+          "X-P2P-Error": p2pErrMsg.replace(/[^\x20-\x7e]/g, "?").slice(0, 200),
         });
       } catch (e) {
         // Both upstreams down — return stale P2P or USGS if any, else 502.
