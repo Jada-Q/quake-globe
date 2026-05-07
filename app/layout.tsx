@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Quake Globe",
   description:
-    "Live global earthquakes from USGS rendered as ringing light pulses on a flat world map. Sister piece to Tide Pixels, Sky Traffic, Bay Ships, Subway Pulse.",
+    "Live global earthquakes from USGS rendered as ringing light pulses on a slowly spinning interactive globe. Sister piece to Tide Pixels, Sky Traffic, Bay Ships, Subway Pulse.",
 };
 
 export default function RootLayout({

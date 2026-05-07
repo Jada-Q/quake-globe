@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { buildProjection } from "@/lib/projection";
-import { getCoastlineRings } from "@/lib/map";
+import { buildGlobeProjection } from "@/lib/projection";
+import { getLand } from "@/lib/map";
 import { fetchQuakes, filterQuakes, type Quake } from "@/lib/usgs";
 import type { Region } from "@/lib/regions";
 
@@ -10,6 +10,10 @@ const POLL_MS = 60_000;
 // How long a ring keeps expanding/fading after the canvas first sees the
 // quake (wall-clock seconds since component-side firstSeen).
 const RING_LIFETIME_MS = 90_000;
+// Time after the last user interaction before auto-rotation resumes.
+const AUTO_RESUME_MS = 3_000;
+// Auto-rotation rate (degrees per RAF frame at ~60fps → ~6°/s, 60s/rev).
+const AUTO_LAMBDA_PER_FRAME = 0.1;
 
 interface QuakeStats {
   visibleCount: number;
@@ -28,7 +32,7 @@ export default function QuakeCanvas({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number>(0);
 
-  // All quakes in the region (filtered server data).
+  // All filtered quakes (by min magnitude — globe shows all globally now).
   const quakesRef = useRef<Map<string, Quake>>(new Map());
   // When this client first saw the quake — drives ring animation.
   const firstSeenRef = useRef<Map<string, number>>(new Map());
@@ -43,7 +47,7 @@ export default function QuakeCanvas({
       try {
         const all = await fetchQuakes(ctrl.signal);
         if (cancelled) return;
-        const filtered = filterQuakes(all, region, minMag);
+        const filtered = filterQuakes(all, minMag);
         const now = Date.now();
         const next = new Map<string, Quake>();
         let largest: Quake | null = null;
@@ -54,7 +58,6 @@ export default function QuakeCanvas({
           }
           if (!largest || q.mag > largest.mag) largest = q;
         }
-        // Drop firstSeen entries no longer in the feed (rolled out of 24h).
         for (const id of firstSeenRef.current.keys()) {
           if (!next.has(id)) firstSeenRef.current.delete(id);
         }
@@ -77,15 +80,15 @@ export default function QuakeCanvas({
       ctrl.abort();
       clearInterval(id);
     };
-  }, [region, minMag, onStatsChange]);
+  }, [minMag, onStatsChange]);
 
-  // Reset firstSeen when region/min changes — ring animation should restart
-  // for quakes newly entering the visible set.
+  // Reset firstSeen when minMag changes — ring animation should restart for
+  // quakes newly entering the visible set.
   useEffect(() => {
     firstSeenRef.current.clear();
-  }, [region, minMag]);
+  }, [minMag]);
 
-  // RAF render loop.
+  // RAF render loop + interaction handlers.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -108,62 +111,112 @@ export default function QuakeCanvas({
     resize();
     window.addEventListener("resize", resize);
 
-    const rings = getCoastlineRings();
+    const land = getLand();
+
+    // Globe state (region preset feeds the initial values).
+    let baseLambda = region.lambda; // current rotation longitude (drifts with auto)
+    let userPhi = region.phi; // current tilt (drag adjusts)
+    let userScale = region.scale;
+    let isDragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let dragStartLambda = 0;
+    let dragStartPhi = 0;
+    // Sentinel: very far in the past, so on page load auto-rotation begins
+    // immediately. The 3s `AUTO_RESUME_MS` gate only kicks in AFTER the user
+    // touches (mouse / touch / wheel) the canvas at least once.
+    let lastInteractionMs = -Infinity;
+    // Two-finger pinch state
+    let pinchStartDist = 0;
+    let pinchStartScale = 1;
+
+    const isLocked = () => !region.autoRotate; // 'japan' / 'americas' / 'europe' lock
 
     const draw = () => {
-      const proj = buildProjection(region, w, h);
+      const now = performance.now();
+      // Auto-rotate when not dragging, region allows it, and 3s elapsed since
+      // last interaction. (For locked regions: never auto-rotate.)
+      if (
+        !isDragging &&
+        region.autoRotate &&
+        now - lastInteractionMs > AUTO_RESUME_MS
+      ) {
+        baseLambda += AUTO_LAMBDA_PER_FRAME;
+      }
+
+      const lambda = baseLambda;
+      const phi = userPhi;
+      const scale = userScale;
+
+      const proj = buildGlobeProjection(w, h, scale, lambda, phi);
 
       drawBackground(ctx, w, h);
-      drawCoastlines(ctx, rings, proj);
-      if (region.key !== "world") drawBboxFrame(ctx, proj);
+      drawGlobeRim(ctx, w, h, proj.pixelRadius);
+      drawSphere(ctx, proj, w, h);
+      drawCoastlines(ctx, proj, land);
 
-      const now = Date.now();
       const quakes = quakesRef.current;
       const firstSeen = firstSeenRef.current;
+      const wallNow = Date.now();
 
-      // Pass 1: dim persistent dots (so even after ring fades the location
-      // still shows).
+      // Pass 1: persistent dim dots (so location stays markable after ring fades).
       for (const q of quakes.values()) {
-        const { x, y } = proj.project(q.lat, q.lng);
-        if (!isOnscreen(x, y, w, h)) continue;
-        ctx.fillStyle = magBaseColor(q.mag, 0.35);
+        const xy = proj.projection([q.lng, q.lat]);
+        if (!xy) continue;
+        const front = proj.isFront(q.lng, q.lat);
+        const alpha = front ? 0.55 : 0.18;
+        ctx.fillStyle = magBaseColor(q.mag, alpha);
         ctx.beginPath();
-        ctx.arc(x, y, 1.4, 0, Math.PI * 2);
+        ctx.arc(xy[0], xy[1], 1.4, 0, Math.PI * 2);
         ctx.fill();
       }
 
-      // Pass 2: rings (above dots).
+      // Pass 2: rings.
       for (const q of quakes.values()) {
-        const seenAt = firstSeen.get(q.id) ?? now;
-        const ringAge = now - seenAt;
+        const seenAt = firstSeen.get(q.id) ?? wallNow;
+        const ringAge = wallNow - seenAt;
         if (ringAge >= RING_LIFETIME_MS) continue;
 
-        const { x, y } = proj.project(q.lat, q.lng);
-        if (!isOnscreen(x, y, w, h)) continue;
+        const xy = proj.projection([q.lng, q.lat]);
+        if (!xy) continue;
+        const front = proj.isFront(q.lng, q.lat);
+        const hemiAlpha = front ? 1.0 : 0.25;
 
-        const t = ringAge / RING_LIFETIME_MS; // 0..1
+        const t = ringAge / RING_LIFETIME_MS;
         const maxR = 6 + q.mag * 14;
         const r = maxR * t;
-        const alpha = 0.85 * (1 - t);
+        const ringAlpha = 0.85 * (1 - t) * hemiAlpha;
 
-        ctx.strokeStyle = magColor(q.mag, alpha);
+        ctx.strokeStyle = magColor(q.mag, ringAlpha);
         ctx.lineWidth = q.mag >= 5 ? 1.5 : 1;
         ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.arc(xy[0], xy[1], r, 0, Math.PI * 2);
         ctx.stroke();
 
-        // Strong outer glow for very recent (< 60 s) or M≥6 quakes.
-        const wallAge = now - q.time_ms;
-        if (wallAge < 60_000 || q.mag >= 6) {
-          const glow = ctx.createRadialGradient(x, y, 0, x, y, maxR * 1.4);
-          const [rr, gg, bb] = magRgb(q.mag);
-          const haloAlpha = q.mag >= 6 ? 0.32 : 0.18;
-          glow.addColorStop(0, `rgba(${rr},${gg},${bb},${haloAlpha * (1 - t)})`);
-          glow.addColorStop(1, `rgba(${rr},${gg},${bb},0)`);
-          ctx.fillStyle = glow;
-          ctx.beginPath();
-          ctx.arc(x, y, maxR * 1.4, 0, Math.PI * 2);
-          ctx.fill();
+        // Strong outer glow for very recent (< 60 s) or M≥6 quakes — front only.
+        if (front) {
+          const wallAge = wallNow - q.time_ms;
+          if (wallAge < 60_000 || q.mag >= 6) {
+            const glow = ctx.createRadialGradient(
+              xy[0],
+              xy[1],
+              0,
+              xy[0],
+              xy[1],
+              maxR * 1.4,
+            );
+            const [rr, gg, bb] = magRgb(q.mag);
+            const haloAlpha = q.mag >= 6 ? 0.32 : 0.18;
+            glow.addColorStop(
+              0,
+              `rgba(${rr},${gg},${bb},${haloAlpha * (1 - t)})`,
+            );
+            glow.addColorStop(1, `rgba(${rr},${gg},${bb},0)`);
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.arc(xy[0], xy[1], maxR * 1.4, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
 
@@ -172,23 +225,118 @@ export default function QuakeCanvas({
     };
     rafRef.current = requestAnimationFrame(draw);
 
+    // Mouse drag — overrides auto-rotation; locked regions still draggable
+    // (drag temporarily breaks the lock by writing baseLambda/userPhi).
+    const onMouseDown = (e: MouseEvent) => {
+      isDragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragStartLambda = baseLambda;
+      dragStartPhi = userPhi;
+      lastInteractionMs = performance.now();
+    };
+    const onMouseMove = (e: MouseEvent) => {
+      if (!isDragging) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      // Sensitivity: divide by ~3 of base radius so a full canvas drag is ~120°.
+      const sensitivity = 0.4;
+      baseLambda = dragStartLambda + dx * sensitivity;
+      userPhi = clamp(dragStartPhi + dy * sensitivity, -85, 85);
+      lastInteractionMs = performance.now();
+    };
+    const onMouseUp = () => {
+      isDragging = false;
+      lastInteractionMs = performance.now();
+    };
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const factor = 1 - e.deltaY * 0.0015;
+      userScale = clamp(userScale * factor, 0.5, 5);
+      lastInteractionMs = performance.now();
+    };
+
+    // Touch — single touch = drag, two-touch = pinch zoom.
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        isDragging = true;
+        dragStartX = e.touches[0].clientX;
+        dragStartY = e.touches[0].clientY;
+        dragStartLambda = baseLambda;
+        dragStartPhi = userPhi;
+      } else if (e.touches.length === 2) {
+        isDragging = false;
+        pinchStartDist = touchDist(e.touches);
+        pinchStartScale = userScale;
+      }
+      lastInteractionMs = performance.now();
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 1 && isDragging) {
+        e.preventDefault();
+        const dx = e.touches[0].clientX - dragStartX;
+        const dy = e.touches[0].clientY - dragStartY;
+        const sensitivity = 0.4;
+        baseLambda = dragStartLambda + dx * sensitivity;
+        userPhi = clamp(dragStartPhi + dy * sensitivity, -85, 85);
+        lastInteractionMs = performance.now();
+      } else if (e.touches.length === 2 && pinchStartDist > 0) {
+        e.preventDefault();
+        const d = touchDist(e.touches);
+        const factor = d / pinchStartDist;
+        userScale = clamp(pinchStartScale * factor, 0.5, 5);
+        lastInteractionMs = performance.now();
+      }
+    };
+    const onTouchEnd = (e: TouchEvent) => {
+      if (e.touches.length === 0) {
+        isDragging = false;
+        pinchStartDist = 0;
+      }
+      lastInteractionMs = performance.now();
+    };
+
+    canvas.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    canvas.addEventListener("wheel", onWheel, { passive: false });
+    canvas.addEventListener("touchstart", onTouchStart, { passive: false });
+    canvas.addEventListener("touchmove", onTouchMove, { passive: false });
+    canvas.addEventListener("touchend", onTouchEnd);
+    canvas.addEventListener("touchcancel", onTouchEnd);
+
     return () => {
       cancelAnimationFrame(rafRef.current);
       window.removeEventListener("resize", resize);
+      canvas.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("touchstart", onTouchStart);
+      canvas.removeEventListener("touchmove", onTouchMove);
+      canvas.removeEventListener("touchend", onTouchEnd);
+      canvas.removeEventListener("touchcancel", onTouchEnd);
     };
   }, [region]);
 
   return (
     <canvas
       ref={canvasRef}
-      className="fixed inset-0 h-full w-full"
+      className="fixed inset-0 h-full w-full cursor-grab active:cursor-grabbing"
       aria-label={`Quake Globe — ${region.label}`}
     />
   );
 }
 
-function isOnscreen(x: number, y: number, w: number, h: number): boolean {
-  return x >= -200 && x <= w + 200 && y >= -200 && y <= h + 200;
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+function touchDist(touches: TouchList): number {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
 }
 
 function drawBackground(
@@ -203,48 +351,87 @@ function drawBackground(
   ctx.fillRect(0, 0, w, h);
 }
 
-function drawCoastlines(
+function drawGlobeRim(
   ctx: CanvasRenderingContext2D,
-  rings: Array<Array<[number, number]>>,
-  proj: ReturnType<typeof buildProjection>,
+  w: number,
+  h: number,
+  pixelRadius: number,
 ): void {
-  ctx.strokeStyle = "rgba(255,255,255,0.22)";
-  ctx.lineWidth = 0.5;
-  for (const ring of rings) {
-    if (ring.length < 2) continue;
-    ctx.beginPath();
-    let prev: { x: number; y: number } | null = null;
-    for (let i = 0; i < ring.length; i++) {
-      const [lng, lat] = ring[i];
-      const p = proj.project(lat, lng);
-      // If two consecutive points are very far apart in pixels, the line
-      // wrapped the antimeridian — break the path.
-      if (prev) {
-        const dx = Math.abs(p.x - prev.x);
-        if (dx > proj.mapW * 0.5) {
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(p.x, p.y);
-          prev = p;
-          continue;
-        }
-        ctx.lineTo(p.x, p.y);
-      } else {
-        ctx.moveTo(p.x, p.y);
-      }
-      prev = p;
-    }
-    ctx.stroke();
-  }
+  const cx = w / 2;
+  const cy = h / 2;
+  // Faint outer halo — gives the sphere a sense of atmosphere.
+  const halo = ctx.createRadialGradient(
+    cx,
+    cy,
+    pixelRadius * 0.95,
+    cx,
+    cy,
+    pixelRadius * 1.18,
+  );
+  halo.addColorStop(0, "rgba(120,160,200,0.10)");
+  halo.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, pixelRadius * 1.18, 0, Math.PI * 2);
+  ctx.fill();
 }
 
-function drawBboxFrame(
+function drawSphere(
   ctx: CanvasRenderingContext2D,
-  proj: ReturnType<typeof buildProjection>,
+  proj: ReturnType<typeof buildGlobeProjection>,
+  w: number,
+  h: number,
 ): void {
-  ctx.strokeStyle = "rgba(255,255,255,0.08)";
-  ctx.lineWidth = 1;
-  ctx.strokeRect(proj.ox, proj.oy, proj.mapW, proj.mapH);
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = proj.pixelRadius;
+  // Radial gradient: top-left bright (the lit hemisphere), bottom-right darker.
+  const grad = ctx.createRadialGradient(
+    cx - r * 0.35,
+    cy - r * 0.35,
+    r * 0.05,
+    cx,
+    cy,
+    r,
+  );
+  grad.addColorStop(0, "rgba(40,55,80,0.85)");
+  grad.addColorStop(0.65, "rgba(18,26,42,0.85)");
+  grad.addColorStop(1, "rgba(8,12,22,0.95)");
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawCoastlines(
+  ctx: CanvasRenderingContext2D,
+  proj: ReturnType<typeof buildGlobeProjection>,
+  land: ReturnType<typeof getLand>,
+): void {
+  // Two passes: first the back hemisphere at low alpha (clipAngle 180 lets
+  // d3-geo project all of land but we toggle clipAngle for each pass to
+  // separate front from back).
+  // Back hemisphere
+  proj.projection.clipAngle(180);
+  const pathAll = proj.path(ctx);
+  ctx.strokeStyle = "rgba(255,255,255,0.12)";
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  pathAll(land);
+  ctx.stroke();
+
+  // Front hemisphere — clip to <90° (the visible cap)
+  proj.projection.clipAngle(90);
+  const pathFront = proj.path(ctx);
+  ctx.strokeStyle = "rgba(255,255,255,0.32)";
+  ctx.lineWidth = 0.5;
+  ctx.beginPath();
+  pathFront(land);
+  ctx.stroke();
+
+  // Restore clipAngle to 180 so subsequent quake-marker projection() calls
+  // return coordinates for both hemispheres (we apply the alpha ourselves).
+  proj.projection.clipAngle(180);
 }
 
 function magRgb(mag: number): [number, number, number] {

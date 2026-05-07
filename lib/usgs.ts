@@ -7,8 +7,6 @@
 // We use all_day because it gives ~200-400 events at any time — dense enough
 // to feel "alive" without being overwhelming.
 
-import { isInRegion, type Region } from "./regions";
-
 export interface Quake {
   id: string;
   mag: number;
@@ -65,15 +63,13 @@ export function parseUsgs(json: unknown): Quake[] {
   return out;
 }
 
-/** Filter quakes to those inside the region bbox and meeting min magnitude. */
-export function filterQuakes(
-  quakes: Quake[],
-  region: Region,
-  minMag: number,
-): Quake[] {
-  return quakes.filter(
-    (q) => q.mag >= minMag && isInRegion(region, q.lat, q.lng),
-  );
+/**
+ * Filter quakes by minimum magnitude only. In v2 (spinning globe) we render
+ * every quake globally and use front/back-hemisphere alpha to convey the
+ * region focus rather than bbox clipping.
+ */
+export function filterQuakes(quakes: Quake[], minMag: number): Quake[] {
+  return quakes.filter((q) => q.mag >= minMag);
 }
 
 /** Fetch the USGS feed via our same-origin proxy. */

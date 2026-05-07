@@ -44,7 +44,6 @@ export default function Overlay({
     timeZone: region.timezone,
   }).format(now);
   const tzAbbr = getTzAbbr(now, region.timezone);
-  const bbox = formatBbox(region);
 
   return (
     <div
@@ -56,7 +55,7 @@ export default function Overlay({
           Quake Globe
         </div>
         <div className="mt-2 text-xs opacity-70">
-          {region.label} · {bbox}
+          {region.label} · {region.caption}
         </div>
         <div className="mt-3 whitespace-nowrap text-[11px] italic opacity-45">
           — also Tide Pixels · Sky Traffic · Bay Ships · Subway Pulse
@@ -100,14 +99,6 @@ export default function Overlay({
       </div>
     </div>
   );
-}
-
-function formatBbox(region: Region): string {
-  const lat0 = region.lat0.toFixed(0);
-  const lat1 = region.lat1.toFixed(0);
-  const lng0 = region.lng0.toFixed(0);
-  const lng1 = region.lng1.toFixed(0);
-  return `${lat0}°..${lat1}°, ${lng0}°..${lng1}°`;
 }
 
 function getTzAbbr(date: Date, timezone: string): string {

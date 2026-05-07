@@ -10,15 +10,9 @@ export default async function Home({
   const raw = await searchParams;
   const params: UrlParams = {
     r: pickString(raw.r),
-    lat0: pickString(raw.lat0),
-    lat1: pickString(raw.lat1),
-    lng0: pickString(raw.lng0),
-    lng1: pickString(raw.lng1),
-    label: pickString(raw.label),
-    tz: pickString(raw.tz),
   };
   const region = resolveRegion(params);
-  const activeKey = params.r?.toLowerCase() || (params.lat0 ? "" : "world");
+  const activeKey = params.r?.toLowerCase() ?? "world";
 
   const minRaw = pickString(raw.min);
   const minParsed = minRaw !== undefined ? Number(minRaw) : NaN;
