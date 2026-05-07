@@ -80,7 +80,7 @@ export default function Overlay({
 
       <div className="absolute bottom-6 left-6 font-serif md:bottom-10 md:left-10">
         <div className="text-[10px] uppercase tracking-[0.25em] opacity-50">
-          Events last 24h
+          {source === "p2p" ? "Recent events (JMA)" : "Events last 24h"}
         </div>
         <div className="mt-0.5 font-mono text-2xl tracking-tight">
           {count.toString().padStart(3, "0")} <span className="text-xs opacity-60">visible (M ≥ {minMag})</span>
