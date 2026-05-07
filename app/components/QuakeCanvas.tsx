@@ -37,14 +37,18 @@ interface QuakeStats {
   fallbackFromP2P: boolean;
 }
 
-/** Max ring radius (px) for a given magnitude — mirrors the ring animation. */
-function ringRadiusForMag(mag: number): number {
-  return 6 + mag * 14;
+/**
+ * Max ring radius (px) for a given magnitude, scaled inversely by current
+ * globe zoom so zoomed-in regions don't drown in oversized rings.
+ * sqrt(scale) keeps the relative-to-geography size roughly constant.
+ */
+function ringRadiusForMag(mag: number, scale: number = 1): number {
+  return (6 + mag * 14) / Math.max(1, Math.sqrt(scale));
 }
 
-/** Click→quake hit threshold in pixels. */
+/** Click→quake hit threshold in pixels (uses base size, not scaled). */
 function hitThresholdForMag(mag: number): number {
-  return Math.max(20, ringRadiusForMag(mag) * 0.6);
+  return Math.max(20, (6 + mag * 14) * 0.6);
 }
 
 interface FocusInfo {
@@ -416,7 +420,7 @@ export default function QuakeCanvas({
         const hemiAlpha = front ? 1.0 : 0.25;
 
         const t = ringAge / RING_LIFETIME_MS;
-        const maxR = ringRadiusForMag(q.mag);
+        const maxR = ringRadiusForMag(q.mag, scale);
         const r = maxR * t;
         const ringAlpha = 0.85 * (1 - t) * hemiAlpha;
 
@@ -461,7 +465,7 @@ export default function QuakeCanvas({
           const pulse = 0.5 + 0.5 * Math.sin(now / 350);
           ctx.strokeStyle = `rgba(255,255,255,${0.35 + 0.25 * pulse})`;
           ctx.lineWidth = 1;
-          const baseR = Math.max(14, ringRadiusForMag(focusedQuake.mag) * 0.45);
+          const baseR = Math.max(14, ringRadiusForMag(focusedQuake.mag, scale) * 0.45);
           ctx.beginPath();
           ctx.arc(xy[0], xy[1], baseR + 2 * pulse, 0, Math.PI * 2);
           ctx.stroke();
