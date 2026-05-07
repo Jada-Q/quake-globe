@@ -8,7 +8,11 @@ Live global earthquakes from the USGS Earthquake Hazards Program, rendered as ri
   <img src="docs/preview/pacific-rim.png" width="32%" alt="Pacific Rim — Ring of Fire active across Aleutians, Japan, Philippines, NZ" />
 </p>
 
-<p align="center"><em>Same minute, three views of the same spinning globe — World · Japan · Pacific Rim. Each ring is a real quake from the last 24 hours.</em></p>
+<p align="center">
+  <img src="docs/preview/focused.png" width="65%" alt="Focus mode — double-click on the M4.4 quake near Chigasaki, Japan zoomed the globe in 3× and surfaced a serif info card at the bottom" />
+</p>
+
+<p align="center"><em>Three region presets — World · Japan · Pacific Rim — plus focus mode: double-click any quake to fly in.</em></p>
 
 **Live**: [quake-globe-2026-05-07.vercel.app](https://quake-globe-2026-05-07.vercel.app)
 
@@ -36,10 +40,11 @@ The bottom dot row (right side on mobile) lets you switch regions live. In v2 a 
 
 - **Drag** the globe with the mouse (or finger on mobile) to spin it freely
 - **Scroll wheel / pinch** to zoom from 0.5× to 5× the base radius
+- **Double-click a quake** (or double-tap on mobile) to fly in — the globe eases into 3× zoom centered on that epicenter over 600 ms, and an info card fades in at the bottom-center with magnitude, place, depth, and time. Double-click empty space, or stop moving the mouse for 5 seconds, to fly back out. Click any region dot to leave focus mode altogether.
 - **Auto-rotation** runs at ~6°/second on the `world` and `pacific-rim` presets — leave it alone and the planet drifts west on its own. After 3 seconds of no interaction, drag input is released and auto-rotation resumes (unless the active preset locks the view)
 - **`japan` / `americas` / `europe` presets lock the view** — the globe stops spinning so you can read the region
 
-A Mac Plash viewer with `Browsing Mode` off sees the auto-rotating planet without needing to click anything.
+A Mac Plash viewer with `Browsing Mode` off sees the auto-rotating planet without needing to click anything. The 5-second auto-exit on focus mode means even if a curious cat double-taps your trackpad, the wallpaper unsticks itself.
 
 ---
 
@@ -56,6 +61,7 @@ A Mac Plash viewer with `Browsing Mode` off sees the auto-rotating planet withou
   - M 5–6 → red-orange `#ff5a3a`
   - M ≥ 6 → deep red `#d62a3a` with stronger glow halo
 - **Recent / strong glow** — quakes < 60 s old or M ≥ 6 get an additional radial gradient halo (front-hemisphere only — the front side is where you read magnitude).
+- **Focus mode reticle** — when you double-click a quake the globe eases in over 600 ms and the focused epicenter gets a soft pulsing reticle so the info card has a clear visual anchor.
 
 The art-piece label at the bottom-right says it: *"データ: USGS Earthquake Hazards Program. リング寿命 90 秒。色 = マグニチュード。"*
 

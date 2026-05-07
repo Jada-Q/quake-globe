@@ -14,10 +14,38 @@ const RING_LIFETIME_MS = 90_000;
 const AUTO_RESUME_MS = 3_000;
 // Auto-rotation rate (degrees per RAF frame at ~60fps → ~6°/s, 60s/rev).
 const AUTO_LAMBDA_PER_FRAME = 0.1;
+// Fly-in / fly-back transition durations (ms).
+const FLY_IN_MS = 600;
+const FLY_BACK_MS = 500;
+// After this long with no mouse movement while in focus mode, auto fly back.
+// Covers Plash desktop where the user can't easily double-click out.
+const FOCUS_AUTO_EXIT_MS = 5_000;
+// Info card fade-in duration after fly-in completes.
+const INFO_FADE_MS = 250;
+// Target zoom on fly-in.
+const FOCUS_TARGET_SCALE = 3.0;
+const FOCUS_MIN_SCALE_BOOST = 1.8;
+const FOCUS_MAX_SCALE = 5.0;
 
 interface QuakeStats {
   visibleCount: number;
   largest: Quake | null;
+}
+
+/** Max ring radius (px) for a given magnitude — mirrors the ring animation. */
+function ringRadiusForMag(mag: number): number {
+  return 6 + mag * 14;
+}
+
+/** Click→quake hit threshold in pixels. */
+function hitThresholdForMag(mag: number): number {
+  return Math.max(20, ringRadiusForMag(mag) * 0.6);
+}
+
+interface FocusInfo {
+  quake: Quake;
+  /** performance.now() when the fly-in completed — drives info-card fade. */
+  arrivedAtMs: number;
 }
 
 export default function QuakeCanvas({
@@ -37,6 +65,12 @@ export default function QuakeCanvas({
   // When this client first saw the quake — drives ring animation.
   const firstSeenRef = useRef<Map<string, number>>(new Map());
   const [, force] = useState(0);
+
+  // Focus-mode state (lifted to React so info card can render in DOM).
+  const [focusInfo, setFocusInfo] = useState<FocusInfo | null>(null);
+  // The RAF loop owns the canonical mutable state via these refs so React
+  // re-renders don't tear the animation. setFocusInfo is mirrored from a ref.
+  const focusedQuakeRef = useRef<Quake | null>(null);
 
   // Polling — fetch from /api/quakes every 60s.
   useEffect(() => {
@@ -88,6 +122,14 @@ export default function QuakeCanvas({
     firstSeenRef.current.clear();
   }, [minMag]);
 
+  // Reset focus state when region changes (clicking a switcher dot navigates
+  // URL → new Region prop → effect re-runs with fresh state). Also clear the
+  // React-side info-card state.
+  useEffect(() => {
+    setFocusInfo(null);
+    focusedQuakeRef.current = null;
+  }, [region]);
+
   // RAF render loop + interaction handlers.
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -130,17 +172,180 @@ export default function QuakeCanvas({
     let pinchStartDist = 0;
     let pinchStartScale = 1;
 
-    const isLocked = () => !region.autoRotate; // 'japan' / 'americas' / 'europe' lock
+    // Focus-mode state machine — owned entirely by the RAF closure.
+    let focusedQuake: Quake | null = null;
+    let transitionStartMs: number | null = null;
+    let transitionDurationMs = FLY_IN_MS;
+    let transitionFrom: { lambda: number; phi: number; scale: number } | null =
+      null;
+    let transitionTo: { lambda: number; phi: number; scale: number } | null =
+      null;
+    /** What we transition TO at the end of the current transition: a quake (focus mode) or null (back to free / region preset). */
+    let transitionTargetQuake: Quake | null = null;
+    // Last mousemove anywhere — drives the 5s auto-exit timer.
+    let lastMouseMoveMs = -Infinity;
+    // Mobile double-tap detection.
+    let lastTapMs = -Infinity;
+    let lastTapX = 0;
+    let lastTapY = 0;
+
+    const isInTransition = () => transitionStartMs !== null;
+    const isInFocusMode = () => focusedQuake !== null;
+
+    /** Snapshot the camera right now — used as fly-back target when exiting focus. */
+    const snapshotView = () => ({
+      lambda: baseLambda,
+      phi: userPhi,
+      scale: userScale,
+    });
+    /** What view we should fly back to when exiting focus mode. */
+    const targetForExit = (): {
+      lambda: number;
+      phi: number;
+      scale: number;
+    } => {
+      // Always return to the region preset view (works for both auto-rotate
+      // 'world' / 'pacific-rim' and locked 'japan' / etc).
+      return {
+        lambda: region.lambda,
+        phi: region.phi,
+        scale: region.scale,
+      };
+    };
+
+    const startFlyToQuake = (q: Quake) => {
+      const from = snapshotView();
+      // d3.geoOrthographic.rotate uses [-lng, -lat] to center (lng, lat).
+      const targetLambda = -q.lng;
+      const targetPhi = -q.lat;
+      const boostedScale = Math.min(
+        FOCUS_MAX_SCALE,
+        Math.max(FOCUS_TARGET_SCALE, userScale * FOCUS_MIN_SCALE_BOOST),
+      );
+      transitionFrom = from;
+      transitionTo = {
+        lambda: targetLambda,
+        phi: targetPhi,
+        scale: boostedScale,
+      };
+      transitionTargetQuake = q;
+      transitionDurationMs = FLY_IN_MS;
+      transitionStartMs = performance.now();
+    };
+
+    const startFlyBack = () => {
+      const from = snapshotView();
+      const to = targetForExit();
+      transitionFrom = from;
+      transitionTo = to;
+      transitionTargetQuake = null;
+      transitionDurationMs = FLY_BACK_MS;
+      transitionStartMs = performance.now();
+      // We clear focus immediately so the info card starts hiding right away
+      // (it's React-driven; the RAF closure also clears focusedQuake).
+      focusedQuake = null;
+      focusedQuakeRef.current = null;
+      setFocusInfo(null);
+    };
+
+    /** Hit-test a canvas-space click (CSS px) against visible quakes.
+     *  Returns the closest within-threshold front-hemisphere quake, biasing
+     *  toward larger magnitude on near-ties. */
+    const hitTest = (cx: number, cy: number): Quake | null => {
+      const proj = buildGlobeProjection(w, h, userScale, baseLambda, userPhi);
+      let best: Quake | null = null;
+      let bestDist = Infinity;
+      let bestMag = -Infinity;
+      for (const q of quakesRef.current.values()) {
+        // Skip back hemisphere — geoOrthographic still returns coords with
+        // clipAngle(180), but we don't want to "click through" the globe.
+        if (!proj.isFront(q.lng, q.lat)) continue;
+        let xy: [number, number] | null;
+        try {
+          xy = proj.projection([q.lng, q.lat]) as [number, number] | null;
+        } catch {
+          continue;
+        }
+        if (!xy) continue;
+        const dx = cx - xy[0];
+        const dy = cy - xy[1];
+        const dist = Math.hypot(dx, dy);
+        const threshold = hitThresholdForMag(q.mag);
+        if (dist > threshold) continue;
+        // Closest wins; on near-tie (within 6 px), prefer larger magnitude.
+        if (
+          dist < bestDist - 6 ||
+          (Math.abs(dist - bestDist) <= 6 && q.mag > bestMag)
+        ) {
+          best = q;
+          bestDist = dist;
+          bestMag = q.mag;
+        }
+      }
+      return best;
+    };
+
+    const handleDoubleClickAt = (cssX: number, cssY: number) => {
+      // Lock during transition — ignore.
+      if (isInTransition()) return;
+      const hit = hitTest(cssX, cssY);
+      if (hit) {
+        startFlyToQuake(hit);
+      } else if (isInFocusMode()) {
+        // Empty-space dblclick while focused → fly back.
+        startFlyBack();
+      }
+      // Empty-space dblclick when NOT in focus → no-op.
+      lastInteractionMs = performance.now();
+    };
 
     const draw = () => {
       const now = performance.now();
-      // Auto-rotate when not dragging, region allows it, and 3s elapsed since
-      // last interaction. (For locked regions: never auto-rotate.)
+
+      // 1) Transition step.
       if (
+        transitionStartMs !== null &&
+        transitionFrom &&
+        transitionTo
+      ) {
+        const elapsed = now - transitionStartMs;
+        const t = Math.min(1, elapsed / transitionDurationMs);
+        // ease-out cubic: t' = 1 - (1-t)^3
+        const eased = 1 - Math.pow(1 - t, 3);
+        baseLambda = lerp(transitionFrom.lambda, transitionTo.lambda, eased);
+        userPhi = lerp(transitionFrom.phi, transitionTo.phi, eased);
+        userScale = lerp(transitionFrom.scale, transitionTo.scale, eased);
+        if (t >= 1) {
+          // Settle on the exact target (avoid float drift).
+          baseLambda = transitionTo.lambda;
+          userPhi = transitionTo.phi;
+          userScale = transitionTo.scale;
+          if (transitionTargetQuake) {
+            focusedQuake = transitionTargetQuake;
+            focusedQuakeRef.current = transitionTargetQuake;
+            setFocusInfo({
+              quake: transitionTargetQuake,
+              arrivedAtMs: now,
+            });
+          }
+          transitionStartMs = null;
+          transitionFrom = null;
+          transitionTo = null;
+          transitionTargetQuake = null;
+        }
+      } else if (
+        focusedQuake !== null &&
+        now - lastMouseMoveMs > FOCUS_AUTO_EXIT_MS
+      ) {
+        // 2) Auto fly-back after 5s of no mouse movement.
+        startFlyBack();
+      } else if (
         !isDragging &&
+        !isInFocusMode() &&
         region.autoRotate &&
         now - lastInteractionMs > AUTO_RESUME_MS
       ) {
+        // 3) Existing auto-rotate (only when not focused, not transitioning).
         baseLambda += AUTO_LAMBDA_PER_FRAME;
       }
 
@@ -183,7 +388,7 @@ export default function QuakeCanvas({
         const hemiAlpha = front ? 1.0 : 0.25;
 
         const t = ringAge / RING_LIFETIME_MS;
-        const maxR = 6 + q.mag * 14;
+        const maxR = ringRadiusForMag(q.mag);
         const r = maxR * t;
         const ringAlpha = 0.85 * (1 - t) * hemiAlpha;
 
@@ -220,6 +425,21 @@ export default function QuakeCanvas({
         }
       }
 
+      // Focus-mode marker — a soft pulsing reticle on the focused quake so the
+      // info card has a clear visual anchor.
+      if (focusedQuake) {
+        const xy = proj.projection([focusedQuake.lng, focusedQuake.lat]);
+        if (xy) {
+          const pulse = 0.5 + 0.5 * Math.sin(now / 350);
+          ctx.strokeStyle = `rgba(255,255,255,${0.35 + 0.25 * pulse})`;
+          ctx.lineWidth = 1;
+          const baseR = Math.max(14, ringRadiusForMag(focusedQuake.mag) * 0.45);
+          ctx.beginPath();
+          ctx.arc(xy[0], xy[1], baseR + 2 * pulse, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
       drawNoise(ctx, w, h);
       rafRef.current = requestAnimationFrame(draw);
     };
@@ -228,6 +448,7 @@ export default function QuakeCanvas({
     // Mouse drag — overrides auto-rotation; locked regions still draggable
     // (drag temporarily breaks the lock by writing baseLambda/userPhi).
     const onMouseDown = (e: MouseEvent) => {
+      if (isInTransition()) return; // lock during fly-in/out
       isDragging = true;
       dragStartX = e.clientX;
       dragStartY = e.clientY;
@@ -236,6 +457,7 @@ export default function QuakeCanvas({
       lastInteractionMs = performance.now();
     };
     const onMouseMove = (e: MouseEvent) => {
+      lastMouseMoveMs = performance.now();
       if (!isDragging) return;
       const dx = e.clientX - dragStartX;
       const dy = e.clientY - dragStartY;
@@ -250,22 +472,62 @@ export default function QuakeCanvas({
       lastInteractionMs = performance.now();
     };
 
+    const onDoubleClick = (e: MouseEvent) => {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const cssX = e.clientX - rect.left;
+      const cssY = e.clientY - rect.top;
+      handleDoubleClickAt(cssX, cssY);
+    };
+
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
+      if (isInTransition()) return; // lock zoom mid-flight
       const factor = 1 - e.deltaY * 0.0015;
       userScale = clamp(userScale * factor, 0.5, 5);
       lastInteractionMs = performance.now();
     };
 
     // Touch — single touch = drag, two-touch = pinch zoom.
+    // Also: two single touches within 300ms at same location = double-tap.
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 1) {
+        const t0 = e.touches[0];
+        const tNow = performance.now();
+        const dt = tNow - lastTapMs;
+        const dx = t0.clientX - lastTapX;
+        const dy = t0.clientY - lastTapY;
+        const sameSpot = Math.hypot(dx, dy) <= 30;
+        if (dt < 300 && sameSpot) {
+          // Double-tap. Cancel any in-flight transition? Spec says lock during
+          // transition — match that behaviour (ignore double-tap mid-flight).
+          if (!isInTransition()) {
+            const rect = canvas.getBoundingClientRect();
+            handleDoubleClickAt(
+              t0.clientX - rect.left,
+              t0.clientY - rect.top,
+            );
+          }
+          lastTapMs = -Infinity; // reset so triple-tap doesn't re-trigger
+          return;
+        }
+        lastTapMs = tNow;
+        lastTapX = t0.clientX;
+        lastTapY = t0.clientY;
+        if (isInTransition()) return; // lock drag mid-flight
         isDragging = true;
-        dragStartX = e.touches[0].clientX;
-        dragStartY = e.touches[0].clientY;
+        dragStartX = t0.clientX;
+        dragStartY = t0.clientY;
         dragStartLambda = baseLambda;
         dragStartPhi = userPhi;
       } else if (e.touches.length === 2) {
+        // Pinch starts — cancel any in-flight transition (don't trap the user).
+        if (isInTransition()) {
+          transitionStartMs = null;
+          transitionFrom = null;
+          transitionTo = null;
+          transitionTargetQuake = null;
+        }
         isDragging = false;
         pinchStartDist = touchDist(e.touches);
         pinchStartScale = userScale;
@@ -300,6 +562,7 @@ export default function QuakeCanvas({
     canvas.addEventListener("mousedown", onMouseDown);
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
+    canvas.addEventListener("dblclick", onDoubleClick);
     canvas.addEventListener("wheel", onWheel, { passive: false });
     canvas.addEventListener("touchstart", onTouchStart, { passive: false });
     canvas.addEventListener("touchmove", onTouchMove, { passive: false });
@@ -312,6 +575,7 @@ export default function QuakeCanvas({
       canvas.removeEventListener("mousedown", onMouseDown);
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      canvas.removeEventListener("dblclick", onDoubleClick);
       canvas.removeEventListener("wheel", onWheel);
       canvas.removeEventListener("touchstart", onTouchStart);
       canvas.removeEventListener("touchmove", onTouchMove);
@@ -321,12 +585,70 @@ export default function QuakeCanvas({
   }, [region]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="fixed inset-0 h-full w-full cursor-grab active:cursor-grabbing"
-      aria-label={`Quake Globe — ${region.label}`}
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        className="fixed inset-0 h-full w-full cursor-grab active:cursor-grabbing"
+        aria-label={`Quake Globe — ${region.label}`}
+      />
+      {focusInfo ? <FocusInfoCard info={focusInfo} /> : null}
+    </>
   );
+}
+
+function FocusInfoCard({ info }: { info: FocusInfo }) {
+  const [opacity, setOpacity] = useState(0);
+  const { quake } = info;
+  useEffect(() => {
+    // Fade in starting from 0 → 0.85 over INFO_FADE_MS.
+    const id = requestAnimationFrame(() => setOpacity(0.85));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  const rel = relativeTime(quake.time_ms);
+  const localIso = formatLocalIso(quake.time_ms);
+
+  return (
+    <div
+      className="pointer-events-none fixed bottom-20 left-1/2 z-30 -translate-x-1/2 select-none text-center font-serif italic text-white md:bottom-24"
+      style={{
+        opacity,
+        transition: `opacity ${INFO_FADE_MS}ms ease-out`,
+        textShadow: "0 1px 6px rgba(0,0,0,0.7)",
+      }}
+    >
+      <div className="text-sm md:text-base">
+        M{quake.mag.toFixed(1)} · {quake.place || "—"}
+      </div>
+      <div className="mt-0.5 text-[11px] opacity-80 md:text-xs">
+        {rel} · depth {quake.depth_km.toFixed(0)} km · {localIso}
+      </div>
+    </div>
+  );
+}
+
+function relativeTime(timeMs: number): string {
+  const diff = Date.now() - timeMs;
+  if (diff < 0) return "just now";
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  return `${day}d ago`;
+}
+
+function formatLocalIso(timeMs: number): string {
+  const d = new Date(timeMs);
+  // YYYY-MM-DD HH:MM in viewer's local TZ.
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
 function clamp(v: number, lo: number, hi: number): number {
