@@ -15,6 +15,10 @@ export interface Quake {
   lat: number;
   lng: number;
   depth_km: number;
+  /** Which upstream this quake came from. UI surfaces this so viewers know
+   *  whether they're looking at USGS (global, M ≥ ~2.5) or P2P/JMA (Japan,
+   *  down to ~M1). */
+  source: "usgs" | "p2p";
 }
 
 interface UsgsFeature {
@@ -58,6 +62,7 @@ export function parseUsgs(json: unknown): Quake[] {
       lat,
       lng,
       depth_km: depth,
+      source: "usgs",
     });
   }
   return out;
@@ -72,10 +77,33 @@ export function filterQuakes(quakes: Quake[], minMag: number): Quake[] {
   return quakes.filter((q) => q.mag >= minMag);
 }
 
-/** Fetch the USGS feed via our same-origin proxy. */
-export async function fetchQuakes(signal?: AbortSignal): Promise<Quake[]> {
-  const res = await fetch("/api/quakes", { signal, cache: "no-store" });
+/** Result of a /api/quakes fetch — quakes plus metadata flags from headers. */
+export interface QuakesFetchResult {
+  quakes: Quake[];
+  /** Server returns this header when the requested source failed and the
+   *  response body is from the USGS fallback. */
+  fallbackFromP2P: boolean;
+}
+
+/**
+ * Fetch quakes from our same-origin proxy. The route now returns a normalized
+ * `Quake[]` shape (instead of raw USGS GeoJSON) so we can mix sources.
+ *
+ * @param source "usgs" (default, global) or "p2p" (Japan domestic, JMA-based,
+ *               denser — see lib/p2p.ts)
+ */
+export async function fetchQuakes(
+  source: "usgs" | "p2p" = "usgs",
+  signal?: AbortSignal,
+): Promise<QuakesFetchResult> {
+  const url = source === "p2p" ? "/api/quakes?source=p2p" : "/api/quakes";
+  const res = await fetch(url, { signal, cache: "no-store" });
   if (!res.ok) throw new Error(`quakes ${res.status}`);
-  const json = await res.json();
-  return parseUsgs(json);
+  const json = (await res.json()) as { quakes?: Quake[] };
+  const fallbackFromP2P =
+    res.headers.get("X-Quake-Fallback") === "p2p-failed-using-usgs";
+  return {
+    quakes: Array.isArray(json.quakes) ? json.quakes : [],
+    fallbackFromP2P,
+  };
 }

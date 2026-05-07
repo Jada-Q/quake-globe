@@ -9,11 +9,15 @@ export default function Overlay({
   minMag,
   count,
   largest,
+  source,
+  fallbackFromP2P,
 }: {
   region: Region;
   minMag: number;
   count: number;
   largest: Quake | null;
+  source: "usgs" | "p2p";
+  fallbackFromP2P: boolean;
 }) {
   const [now, setNow] = useState<Date | null>(null);
 
@@ -89,13 +93,31 @@ export default function Overlay({
           <div className="mt-1 text-[11px] opacity-50">no events in window</div>
         )}
         <div className="mt-1 text-[11px] opacity-50">
-          data: USGS · 60s polling · ~1–15 min lag
+          {source === "p2p"
+            ? "data: P2P地震情報 (JMA based) · 60s polling"
+            : "data: USGS · 60s polling · ~1–15 min lag"}
         </div>
+        {fallbackFromP2P ? (
+          <div className="mt-0.5 text-[10px] opacity-40">
+            ⚠️ P2P unreachable, using USGS
+          </div>
+        ) : null}
       </div>
 
       <div className="absolute bottom-10 right-10 hidden max-w-[280px] text-right font-serif text-xs italic opacity-50 md:block">
-        データ: USGS Earthquake Hazards Program.<br />
-        リング寿命 90 秒。色 = マグニチュード。
+        {source === "p2p" ? (
+          <>
+            データ: 気象庁経由 (P2P地震情報 API).
+            <br />
+            リング寿命 90 秒。色 = マグニチュード。
+          </>
+        ) : (
+          <>
+            データ: USGS Earthquake Hazards Program.
+            <br />
+            リング寿命 90 秒。色 = マグニチュード。
+          </>
+        )}
       </div>
     </div>
   );

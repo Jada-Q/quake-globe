@@ -15,11 +15,20 @@ export default function Scene({
 }) {
   const [count, setCount] = useState(0);
   const [largest, setLargest] = useState<Quake | null>(null);
+  const [source, setSource] = useState<"usgs" | "p2p">("usgs");
+  const [fallbackFromP2P, setFallbackFromP2P] = useState(false);
 
   const onStatsChange = useCallback(
-    (s: { visibleCount: number; largest: Quake | null }) => {
+    (s: {
+      visibleCount: number;
+      largest: Quake | null;
+      source: "usgs" | "p2p";
+      fallbackFromP2P: boolean;
+    }) => {
       setCount(s.visibleCount);
       setLargest(s.largest);
+      setSource(s.source);
+      setFallbackFromP2P(s.fallbackFromP2P);
     },
     [],
   );
@@ -36,6 +45,8 @@ export default function Scene({
         minMag={minMag}
         count={count}
         largest={largest}
+        source={source}
+        fallbackFromP2P={fallbackFromP2P}
       />
     </>
   );

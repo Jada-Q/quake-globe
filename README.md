@@ -69,13 +69,23 @@ Projection is **orthographic** (d3.geoOrthographic on Canvas 2D) — a real sphe
 
 ---
 
-## Data
+## Data sources
 
-- **Source**: [USGS Earthquakes Feed](https://earthquake.usgs.gov/earthquakes/feed/) — `summary/all_day.geojson` (last 24 h, ~200–400 events globally at any moment)
-- **Lag**: USGS auto-publishes events ~1–15 minutes after detection for small quakes; large events are typically faster
-- **Polling**: client polls our API proxy every 60 s; proxy caches USGS for 50 s
+The Japan view and the rest of the world use **different upstreams** because USGS's global feed is too coarse to make Japan feel alive:
 
-The feed URL is documented in `app/api/quakes/route.ts` so you can swap it for `all_hour`, `all_week`, or `all_month`.
+| View | Upstream | Why |
+|---|---|---|
+| `/?r=japan` | [P2P地震情報 API](https://www.p2pquake.net/develop/json_api_v2/) (relays JMA's official feed) | Catches Japan-area quakes down to ~M1 → ~30–100 events/day. USGS catches ~1–3/day for Japan. |
+| Everything else (world / americas / europe / pacific-rim) | [USGS Earthquakes Feed](https://earthquake.usgs.gov/earthquakes/feed/) — `summary/all_day.geojson` | ~200–400 global events/day (last 24 h), M ≥ ~2.5 |
+
+The label in the bottom-left of the overlay flips between *"data: USGS · 60s polling · ~1–15 min lag"* and *"data: P2P地震情報 (JMA based) · 60s polling"* so you always know which feed you're seeing. If P2P is unreachable from our server, we silently fall back to USGS and add a small ⚠️ notice underneath.
+
+- **Lag**: USGS publishes ~1–15 min after detection for small quakes (faster for large). P2P relays JMA reports within seconds of issue.
+- **Polling**: client polls every 60 s; proxy caches each source independently for 50 s.
+
+The route handler is in `app/api/quakes/route.ts`. P2P parsing + JST→UTC conversion lives in `lib/p2p.ts`. USGS parsing is in `lib/usgs.ts`.
+
+Attribution: Japan data via [P2P地震情報](https://www.p2pquake.net/) (relays 気象庁 / JMA). Global data via [USGS Earthquake Hazards Program](https://earthquake.usgs.gov/earthquakes/feed/).
 
 ---
 

@@ -30,6 +30,11 @@ const FOCUS_MAX_SCALE = 5.0;
 interface QuakeStats {
   visibleCount: number;
   largest: Quake | null;
+  /** Which upstream the currently-loaded quakes came from. Drives the
+   *  data-source label in the bottom-left overlay. */
+  source: "usgs" | "p2p";
+  /** True when we asked for P2P but got USGS due to a P2P failure. */
+  fallbackFromP2P: boolean;
 }
 
 /** Max ring radius (px) for a given magnitude — mirrors the ring animation. */
@@ -77,9 +82,15 @@ export default function QuakeCanvas({
     let cancelled = false;
     const ctrl = new AbortController();
 
+    // Japan view → P2P/JMA (denser, ~M1+). Everywhere else → USGS (global).
+    const desiredSource: "usgs" | "p2p" = region.key === "japan" ? "p2p" : "usgs";
+
     const poll = async () => {
       try {
-        const all = await fetchQuakes(ctrl.signal);
+        const { quakes: all, fallbackFromP2P } = await fetchQuakes(
+          desiredSource,
+          ctrl.signal,
+        );
         if (cancelled) return;
         const filtered = filterQuakes(all, minMag);
         const now = Date.now();
@@ -96,16 +107,33 @@ export default function QuakeCanvas({
           if (!next.has(id)) firstSeenRef.current.delete(id);
         }
         quakesRef.current = next;
-        onStatsChange?.({ visibleCount: next.size, largest });
+        // The actual source is the desired one unless we were told we got
+        // a fallback (P2P → USGS). Sample one quake to double-check the
+        // server's claim — defensive against header drift.
+        const actualSource: "usgs" | "p2p" = fallbackFromP2P
+          ? "usgs"
+          : desiredSource;
+        onStatsChange?.({
+          visibleCount: next.size,
+          largest,
+          source: actualSource,
+          fallbackFromP2P,
+        });
         force((n) => (n + 1) % 1000);
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
         if (process.env.NODE_ENV === "development") {
           // eslint-disable-next-line no-console
-          console.warn("usgs", e);
+          console.warn("quakes", e);
         }
       }
     };
+
+    // Reset stale quakes when source changes — P2P uses "p2p:..." ids and
+    // USGS uses native ids, so the maps are mutually exclusive anyway, but
+    // resetting avoids briefly mixing sources during a region switch.
+    quakesRef.current = new Map();
+    firstSeenRef.current = new Map();
 
     poll();
     const id = setInterval(poll, POLL_MS);
@@ -114,7 +142,7 @@ export default function QuakeCanvas({
       ctrl.abort();
       clearInterval(id);
     };
-  }, [minMag, onStatsChange]);
+  }, [minMag, onStatsChange, region.key]);
 
   // Reset firstSeen when minMag changes — ring animation should restart for
   // quakes newly entering the visible set.
