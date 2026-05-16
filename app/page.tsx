@@ -1,5 +1,6 @@
 import Scene from "./components/Scene";
 import RegionSwitcher from "./components/RegionSwitcher";
+import LavaCaption from "./components/LavaCaption";
 import { resolveRegion, type UrlParams } from "@/lib/regions";
 
 export default async function Home({
@@ -23,6 +24,7 @@ export default async function Home({
     <main className="relative h-screen w-screen overflow-hidden">
       <Scene region={region} minMag={minMag} />
       <RegionSwitcher active={activeKey} />
+      <LavaCaption />
     </main>
   );
 }
