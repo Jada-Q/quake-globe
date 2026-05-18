@@ -16,11 +16,13 @@ const REGIONS: Array<{ key: string; label: string }> = [
 ];
 
 export default function RegionSwitcher({ active }: { active: string }) {
-  const [show, setShow] = useState(false);
+  const [hidden, setHidden] = useState(false);
   useEffect(() => {
-    setShow(new URLSearchParams(window.location.search).get("embed") === "app");
+    if (new URLSearchParams(window.location.search).get("embed") === "app") {
+      setHidden(true);
+    }
   }, []);
-  if (!show) return null;
+  if (hidden) return null;
 
   return (
     <div
