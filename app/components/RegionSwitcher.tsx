@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 // IMPORTANT: this switcher MUST use `group/btn` per-dot hover pattern, NOT
 // container `group-hover`. The container-only pattern makes ALL labels appear
 // on any hover and they collide. See feedback_switcher_per_dot_hover.md —
@@ -14,6 +16,12 @@ const REGIONS: Array<{ key: string; label: string }> = [
 ];
 
 export default function RegionSwitcher({ active }: { active: string }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    setShow(new URLSearchParams(window.location.search).get("embed") === "app");
+  }, []);
+  if (!show) return null;
+
   return (
     <div
       className="pointer-events-none fixed z-20 select-none
