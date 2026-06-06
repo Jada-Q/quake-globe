@@ -11,6 +11,8 @@ export default function Overlay({
   largest,
   source,
   fallbackFromP2P,
+  stale,
+  staleSince,
 }: {
   region: Region;
   minMag: number;
@@ -18,6 +20,8 @@ export default function Overlay({
   largest: Quake | null;
   source: "usgs" | "p2p";
   fallbackFromP2P: boolean;
+  stale: boolean;
+  staleSince: number | null;
 }) {
   const [now, setNow] = useState<Date | null>(null);
 
@@ -102,6 +106,13 @@ export default function Overlay({
             ⚠️ P2P unreachable, using USGS
           </div>
         ) : null}
+        {stale ? (
+          <div className="mt-0.5 text-[10px] text-amber-300/70">
+            {staleSince !== null
+              ? `⚠️ offline · last known ${relativeAge(staleSince, now)}`
+              : "⚠️ live feed delayed · showing cached"}
+          </div>
+        ) : null}
       </div>
 
       <div className="absolute bottom-10 right-10 hidden max-w-[280px] text-right font-serif text-xs italic opacity-50 md:block">
@@ -121,6 +132,17 @@ export default function Overlay({
       </div>
     </div>
   );
+}
+
+/** Human "N ago" for a unix-ms timestamp, relative to `now`. */
+function relativeAge(savedAtMs: number, now: Date): string {
+  const sec = Math.max(0, Math.floor((now.getTime() - savedAtMs) / 1000));
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  return `${Math.floor(hr / 24)}d ago`;
 }
 
 function getTzAbbr(date: Date, timezone: string): string {

@@ -83,6 +83,9 @@ export interface QuakesFetchResult {
   /** Server returns this header when the requested source failed and the
    *  response body is from the USGS fallback. */
   fallbackFromP2P: boolean;
+  /** True when the server served its in-memory cache because BOTH upstreams
+   *  were down (X-Cache-Status: stale-error) — the data is real but delayed. */
+  stale: boolean;
 }
 
 /**
@@ -102,8 +105,10 @@ export async function fetchQuakes(
   const json = (await res.json()) as { quakes?: Quake[] };
   const fallbackFromP2P =
     res.headers.get("X-Quake-Fallback") === "p2p-failed-using-usgs";
+  const stale = res.headers.get("X-Cache-Status") === "stale-error";
   return {
     quakes: Array.isArray(json.quakes) ? json.quakes : [],
     fallbackFromP2P,
+    stale,
   };
 }

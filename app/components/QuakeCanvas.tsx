@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { buildGlobeProjection } from "@/lib/projection";
 import { getLand } from "@/lib/map";
 import { fetchQuakes, filterQuakes, type Quake } from "@/lib/usgs";
+import { saveLastKnown, loadLastKnown } from "@/lib/last-known";
 import type { Region } from "@/lib/regions";
 
 const POLL_MS = 60_000;
@@ -35,6 +36,14 @@ interface QuakeStats {
   source: "usgs" | "p2p";
   /** True when we asked for P2P but got USGS due to a P2P failure. */
   fallbackFromP2P: boolean;
+  /** True when the displayed data is not confirmed-fresh: either the server
+   *  served its stale cache, or we hydrated from localStorage after the fetch
+   *  failed outright. */
+  stale: boolean;
+  /** unix ms of when the displayed data was last known fresh — only set when
+   *  we hydrated from localStorage (we know the exact save time). null when
+   *  the server served recent-ish stale cache (exact age unknown). */
+  staleSince: number | null;
 }
 
 /**
@@ -88,48 +97,93 @@ export default function QuakeCanvas({
 
     // Japan view → P2P/JMA (denser, ~M1+). Everywhere else → USGS (global).
     const desiredSource: "usgs" | "p2p" = region.key === "japan" ? "p2p" : "usgs";
+    // localStorage slot for the last-known-state cache (per source).
+    const lsKey = `quake-globe:last-known:${desiredSource}`;
+
+    // Apply a set of quakes to the canvas + report stats. Shared by the live
+    // path and the offline-hydrate path. `freshAt` is the firstSeen timestamp
+    // stamped onto NEW ids: live data passes Date.now() so a fresh quake fires
+    // a ring; hydrated stale data passes a far-past time so old quakes render
+    // as quiet dots — a ring means "a quake just happened", firing it for
+    // cached data would be a lie.
+    const applyQuakes = (
+      all: Quake[],
+      meta: {
+        source: "usgs" | "p2p";
+        fallbackFromP2P: boolean;
+        stale: boolean;
+        staleSince: number | null;
+        freshAt: number;
+      },
+    ) => {
+      const filtered = filterQuakes(all, minMag);
+      const next = new Map<string, Quake>();
+      let largest: Quake | null = null;
+      for (const q of filtered) {
+        next.set(q.id, q);
+        if (!firstSeenRef.current.has(q.id)) {
+          firstSeenRef.current.set(q.id, meta.freshAt);
+        }
+        if (!largest || q.mag > largest.mag) largest = q;
+      }
+      for (const id of firstSeenRef.current.keys()) {
+        if (!next.has(id)) firstSeenRef.current.delete(id);
+      }
+      quakesRef.current = next;
+      onStatsChange?.({
+        visibleCount: next.size,
+        largest,
+        source: meta.source,
+        fallbackFromP2P: meta.fallbackFromP2P,
+        stale: meta.stale,
+        staleSince: meta.staleSince,
+      });
+      force((n) => (n + 1) % 1000);
+    };
 
     const poll = async () => {
       try {
-        const { quakes: all, fallbackFromP2P } = await fetchQuakes(
+        const { quakes: all, fallbackFromP2P, stale } = await fetchQuakes(
           desiredSource,
           ctrl.signal,
         );
         if (cancelled) return;
-        const filtered = filterQuakes(all, minMag);
-        const now = Date.now();
-        const next = new Map<string, Quake>();
-        let largest: Quake | null = null;
-        for (const q of filtered) {
-          next.set(q.id, q);
-          if (!firstSeenRef.current.has(q.id)) {
-            firstSeenRef.current.set(q.id, now);
-          }
-          if (!largest || q.mag > largest.mag) largest = q;
-        }
-        for (const id of firstSeenRef.current.keys()) {
-          if (!next.has(id)) firstSeenRef.current.delete(id);
-        }
-        quakesRef.current = next;
+        // Live success → persist as the new last-known state.
+        saveLastKnown(lsKey, all);
         // The actual source is the desired one unless we were told we got
-        // a fallback (P2P → USGS). Sample one quake to double-check the
-        // server's claim — defensive against header drift.
+        // a fallback (P2P → USGS), defensive against header drift.
         const actualSource: "usgs" | "p2p" = fallbackFromP2P
           ? "usgs"
           : desiredSource;
-        onStatsChange?.({
-          visibleCount: next.size,
-          largest,
+        applyQuakes(all, {
           source: actualSource,
           fallbackFromP2P,
+          stale,
+          staleSince: null,
+          freshAt: Date.now(),
         });
-        force((n) => (n + 1) % 1000);
       } catch (e) {
         if ((e as Error).name === "AbortError") return;
         if (process.env.NODE_ENV === "development") {
           // eslint-disable-next-line no-console
           console.warn("quakes", e);
         }
+        // Fetch failed outright. If we already have data on screen, keep it —
+        // a transient blip shouldn't downgrade good live data. Only when we
+        // have NOTHING to show (cold start / first load offline) do we hydrate
+        // from the last-known cache, so the user sees a populated globe + an
+        // honest "last known N ago" marker instead of a misleading empty one.
+        if (quakesRef.current.size > 0) return;
+        const cached = loadLastKnown<Quake[]>(lsKey);
+        if (cancelled || !cached || !Array.isArray(cached.data)) return;
+        applyQuakes(cached.data, {
+          source: desiredSource,
+          fallbackFromP2P: false,
+          stale: true,
+          staleSince: cached.savedAt,
+          // Far in the past → hydrated quakes are quiet dots, not live rings.
+          freshAt: cached.savedAt - RING_LIFETIME_MS,
+        });
       }
     };
 
