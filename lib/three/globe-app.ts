@@ -7,21 +7,19 @@
 
 import {
   AmbientLight,
-  Color,
   DirectionalLight,
   Group,
   Mesh,
-  MeshToonMaterial,
   NearestFilter,
   DataTexture,
   RedFormat,
   PerspectiveCamera,
   Scene,
-  SphereGeometry,
   Vector3,
   WebGLRenderer,
 } from "three";
-import { PAPER, defaultToonParams, type ToonParams } from "./palette";
+import { defaultToonParams, type ToonParams } from "./palette";
+import { buildPlanet, type Planet } from "./planet";
 
 /** Base distance from which scale=1.0 frames the whole globe (radius 1). */
 const BASE_CAMERA_DIST = 4.6;
@@ -40,7 +38,9 @@ export class ToonGlobeApp {
   private scene = new Scene();
   private camera: PerspectiveCamera;
   private planetGroup = new Group();
+  private planet: Planet;
   private sun!: DirectionalLight;
+  private lightDir = new Vector3(0, 0, 1);
   private raf = 0;
   private lastRenderMs = 0;
   private readonly embed: boolean;
@@ -73,7 +73,8 @@ export class ToonGlobeApp {
     this.scene.add(this.sun, new AmbientLight(0xffffff, 0.55));
 
     this.scene.add(this.planetGroup);
-    this.planetGroup.add(this.buildPlaceholderPlanet());
+    this.planet = buildPlanet(this.params);
+    this.planetGroup.add(this.planet.group);
 
     this.resize();
     window.addEventListener("resize", this.resize);
@@ -96,28 +97,16 @@ export class ToonGlobeApp {
     return tex;
   }
 
-  /** Place the sun from the shared azimuth/elevation params. */
+  /** Place the sun + shader light from the shared azimuth/elevation params. */
   applyLightDir(): void {
     const az = (this.params.lightAzimuth * Math.PI) / 180;
     const el = (this.params.lightElevation * Math.PI) / 180;
-    const dir = new Vector3(
+    this.lightDir.set(
       Math.sin(az) * Math.cos(el),
       Math.sin(el),
       Math.cos(az) * Math.cos(el),
     );
-    this.sun.position.copy(dir.multiplyScalar(10));
-  }
-
-  private buildPlaceholderPlanet(): Mesh {
-    const geo = new SphereGeometry(1, 64, 48);
-    const mat = new MeshToonMaterial({
-      color: new Color(PAPER),
-      gradientMap: ToonGlobeApp.makeGradientMap(
-        this.params.steps,
-        this.params.shadeMul,
-      ),
-    });
-    return new Mesh(geo, mat);
+    this.sun.position.copy(this.lightDir).multiplyScalar(10);
   }
 
   private resize = () => {
@@ -139,6 +128,7 @@ export class ToonGlobeApp {
     this.lastRenderMs = now;
 
     this.planetGroup.rotation.y += (this.params.rotationSpeed * Math.PI) / 180;
+    this.planet.applyParams(this.params, this.lightDir);
     this.renderer.render(this.scene, this.camera);
   };
 
@@ -147,6 +137,7 @@ export class ToonGlobeApp {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.resize);
     document.removeEventListener("visibilitychange", this.onVisibility);
+    this.planet.dispose();
     this.scene.traverse((obj) => {
       if (obj instanceof Mesh) {
         obj.geometry.dispose();

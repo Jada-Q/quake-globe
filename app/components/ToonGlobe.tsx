@@ -32,14 +32,21 @@ export default function ToonGlobe({
     onStatsChange,
   });
 
-  // Mount/unmount the GL app.
+  // Mount/unmount the GL app (+ dev-only Tweakpane).
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const app = new ToonGlobeApp({ canvas, embed });
     appRef.current = app;
+    let disposePane: (() => void) | null = null;
+    if (process.env.NODE_ENV === "development" && !embed) {
+      import("@/lib/three/debug-pane").then(async ({ mountDebugPane }) => {
+        if (appRef.current === app) disposePane = await mountDebugPane(app);
+      });
+    }
     return () => {
       appRef.current = null;
+      disposePane?.();
       app.dispose();
     };
   }, [embed]);

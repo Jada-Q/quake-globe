@@ -9,7 +9,7 @@
 export const MINT_BG = "#66c4bd";
 export const PAPER = "#d8d3c5";
 export const VEGETATION = "#3e7d58";
-export const SEA = "#4fa89e";
+export const SEA = "#58b5ab";
 export const INK = "#22302c";
 export const ACCENT = "#e8ab3c"; // intro BEGIN button ONLY
 export const CLOUD = "#f4f1e8";
@@ -42,7 +42,7 @@ export interface ToonParams {
 export function defaultToonParams(): ToonParams {
   return {
     steps: 3,
-    shadeMul: 0.72,
+    shadeMul: 0.8,
     inkWidth: 0.018,
     inkStrength: 0.85,
     outlineWidth: 0.012,
