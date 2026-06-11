@@ -27,6 +27,7 @@ import {
 } from "./quake-layer";
 import { buildClouds, type Clouds } from "./clouds";
 import { buildPlanes, type Planes } from "./planes";
+import { buildShips, type Ships } from "./ships";
 import { buildIntroLetters, type IntroLetters } from "./intro-letters";
 import type { Quake } from "@/lib/usgs";
 import type { Region } from "@/lib/regions";
@@ -58,6 +59,7 @@ export class ToonGlobeApp {
   private quakeLayer: QuakeLayer;
   private clouds: Clouds;
   private planes: Planes;
+  private ships: Ships;
   private introLetters: IntroLetters | null = null;
   private onIntroExitDone: (() => void) | null = null;
   private sun!: DirectionalLight;
@@ -115,6 +117,9 @@ export class ToonGlobeApp {
     this.tiltGroup.add(this.clouds.group);
     this.planes = buildPlanes();
     this.tiltGroup.add(this.planes.group);
+    // Ships ride the planet's frame (they fade over land via the land mask).
+    this.ships = buildShips();
+    this.spinGroup.add(this.ships.group);
 
     if (intro) {
       // Letters live at the scene root: they face the camera and hold still
@@ -256,6 +261,7 @@ export class ToonGlobeApp {
     this.tiltGroup.position.y = Math.sin(now * 0.0004) * 0.012;
     this.clouds.update(this.params.cloudSpeed);
     this.planes.update(this.params.cloudSpeed);
+    this.ships.update(this.params.cloudSpeed);
 
     if (this.introLetters && this.introLetters.update(now)) {
       this.scene.remove(this.introLetters.group);
@@ -284,6 +290,7 @@ export class ToonGlobeApp {
     this.quakeLayer.dispose();
     this.clouds.dispose();
     this.planes.dispose();
+    this.ships.dispose();
     this.introLetters?.dispose();
     this.scene.traverse((obj) => {
       if (obj instanceof Mesh) {
