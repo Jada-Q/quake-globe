@@ -12,18 +12,22 @@
     "next": "16.2.6",
     "react": "19.2.4",
     "react-dom": "19.2.4",
+    "three": "^0.184.0",
     "topojson-client": "^3.1.0",
     "world-atlas": "^2.0.2"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.0",
     "@tailwindcss/postcss": "^4",
     "@types/d3-geo": "^3.1.0",
     "@types/geojson": "^7946.0.16",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/three": "^0.184.1",
     "@types/topojson-client": "^3.1.5",
     "tailwindcss": "^4",
+    "tweakpane": "^4.0.5",
     "typescript": "^5"
   }
 }

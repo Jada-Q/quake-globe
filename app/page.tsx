@@ -20,10 +20,26 @@ export default async function Home({
   const minMag =
     Number.isFinite(minParsed) && minParsed >= 0 ? minParsed : 2.5;
 
+  // Theme: toon (default, WebGL) vs dark (legacy 2D canvas). Anything that
+  // isn't exactly "dark" falls through to toon.
+  const theme: "toon" | "dark" =
+    pickString(raw.theme) === "dark" ? "dark" : "toon";
+  const embed = pickString(raw.embed) === "app";
+  const intro = theme === "toon" && !embed && pickString(raw.intro) !== "0";
+
   return (
-    <main className="relative h-screen w-screen overflow-hidden">
-      <Scene region={region} minMag={minMag} />
-      <RegionSwitcher active={activeKey} />
+    <main
+      data-theme={theme}
+      className="relative h-screen w-screen overflow-hidden"
+    >
+      <Scene
+        region={region}
+        minMag={minMag}
+        theme={theme}
+        embed={embed}
+        intro={intro}
+      />
+      <RegionSwitcher active={activeKey} theme={theme} />
       <LavaCaption />
     </main>
   );

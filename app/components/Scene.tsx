@@ -1,17 +1,29 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import dynamic from "next/dynamic";
 import QuakeCanvas from "./QuakeCanvas";
 import Overlay from "./Overlay";
 import type { Region } from "@/lib/regions";
 import type { Quake } from "@/lib/usgs";
+import type { QuakeStats } from "@/lib/use-quakes";
+
+// The WebGL toon renderer (three.js) loads only on the toon path — the dark
+// theme keeps its 2D-canvas bundle untouched, with zero three.js bytes.
+const ToonGlobe = dynamic(() => import("./ToonGlobe"), { ssr: false });
 
 export default function Scene({
   region,
   minMag,
+  theme,
+  embed,
+  intro,
 }: {
   region: Region;
   minMag: number;
+  theme: "toon" | "dark";
+  embed: boolean;
+  intro: boolean;
 }) {
   const [count, setCount] = useState(0);
   const [largest, setLargest] = useState<Quake | null>(null);
@@ -20,32 +32,32 @@ export default function Scene({
   const [stale, setStale] = useState(false);
   const [staleSince, setStaleSince] = useState<number | null>(null);
 
-  const onStatsChange = useCallback(
-    (s: {
-      visibleCount: number;
-      largest: Quake | null;
-      source: "usgs" | "p2p";
-      fallbackFromP2P: boolean;
-      stale: boolean;
-      staleSince: number | null;
-    }) => {
-      setCount(s.visibleCount);
-      setLargest(s.largest);
-      setSource(s.source);
-      setFallbackFromP2P(s.fallbackFromP2P);
-      setStale(s.stale);
-      setStaleSince(s.staleSince);
-    },
-    [],
-  );
+  const onStatsChange = useCallback((s: QuakeStats) => {
+    setCount(s.visibleCount);
+    setLargest(s.largest);
+    setSource(s.source);
+    setFallbackFromP2P(s.fallbackFromP2P);
+    setStale(s.stale);
+    setStaleSince(s.staleSince);
+  }, []);
 
   return (
     <>
-      <QuakeCanvas
-        region={region}
-        minMag={minMag}
-        onStatsChange={onStatsChange}
-      />
+      {theme === "dark" ? (
+        <QuakeCanvas
+          region={region}
+          minMag={minMag}
+          onStatsChange={onStatsChange}
+        />
+      ) : (
+        <ToonGlobe
+          region={region}
+          minMag={minMag}
+          embed={embed}
+          intro={intro}
+          onStatsChange={onStatsChange}
+        />
+      )}
       <Overlay
         region={region}
         minMag={minMag}
