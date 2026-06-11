@@ -1,9 +1,10 @@
 // ToonGlobeApp — imperative three.js orchestrator for the toon theme.
 //
 // All GL state lives here; the React wrapper (ToonGlobe.tsx) only mounts it,
-// feeds it quake data from useQuakes, and renders DOM overlays. Stub stage:
-// renderer + RAF + resize + a placeholder sphere; planet material, quake
-// layer, clouds and intro arrive in later steps.
+// feeds it quake data from useQuakes, and renders DOM overlays.
+//
+// Scene graph: tiltGroup (phi, X) ⊃ spinGroup (lambda, Y) ⊃ planet/quakes.
+// The camera stays on +Z; CameraRig owns the d3-semantics view state.
 
 import {
   AmbientLight,
@@ -13,34 +14,35 @@ import {
   NearestFilter,
   DataTexture,
   RedFormat,
-  PerspectiveCamera,
   Scene,
   Vector3,
   WebGLRenderer,
 } from "three";
 import { defaultToonParams, type ToonParams } from "./palette";
 import { buildPlanet, type Planet } from "./planet";
-
-/** Base distance from which scale=1.0 frames the whole globe (radius 1). */
-const BASE_CAMERA_DIST = 4.6;
-const CAMERA_FOV = 30;
+import { CameraRig } from "./camera-rig";
+import { attachControls } from "./controls";
+import type { Region } from "@/lib/regions";
 
 export interface ToonGlobeAppOptions {
   canvas: HTMLCanvasElement;
+  region: Region;
   /** Wallpaper mode: lower DPR cap, low-power GPU, 30fps throttle. */
   embed: boolean;
 }
 
 export class ToonGlobeApp {
   readonly params: ToonParams = defaultToonParams();
+  readonly rig: CameraRig;
 
   private renderer: WebGLRenderer;
   private scene = new Scene();
-  private camera: PerspectiveCamera;
-  private planetGroup = new Group();
+  private tiltGroup = new Group();
+  private spinGroup = new Group();
   private planet: Planet;
   private sun!: DirectionalLight;
   private lightDir = new Vector3(0, 0, 1);
+  private detachControls: () => void;
   private raf = 0;
   private lastRenderMs = 0;
   private readonly embed: boolean;
@@ -53,7 +55,7 @@ export class ToonGlobeApp {
     }
   };
 
-  constructor({ canvas, embed }: ToonGlobeAppOptions) {
+  constructor({ canvas, region, embed }: ToonGlobeAppOptions) {
     this.embed = embed;
     this.renderer = new WebGLRenderer({
       canvas,
@@ -61,20 +63,26 @@ export class ToonGlobeApp {
       alpha: true, // mint backdrop + swirl live in CSS (ToonBackdrop), free
       powerPreference: embed ? "low-power" : "default",
     });
-    this.camera = new PerspectiveCamera(CAMERA_FOV, 1, 0.1, 100);
-    this.camera.position.set(0, 0, BASE_CAMERA_DIST);
+    this.rig = new CameraRig(region);
 
-    // Lights serve the MeshToonMaterial props (clouds/letters/placeholder).
-    // The final planet shader ignores them (light dir is a uniform), so the
-    // directional light tracks the same azimuth/elevation params for a
-    // consistent sun across both material families.
+    // Lights serve the MeshToonMaterial props (clouds/letters). The planet
+    // shader ignores them (light dir is a uniform); the directional light
+    // tracks the same azimuth/elevation params so the sun is consistent.
     this.sun = new DirectionalLight(0xffffff, 2.2);
     this.applyLightDir();
     this.scene.add(this.sun, new AmbientLight(0xffffff, 0.55));
 
-    this.scene.add(this.planetGroup);
+    this.tiltGroup.add(this.spinGroup);
+    this.scene.add(this.tiltGroup);
     this.planet = buildPlanet(this.params);
-    this.planetGroup.add(this.planet.group);
+    this.spinGroup.add(this.planet.group);
+
+    this.detachControls = attachControls({
+      canvas,
+      rig: this.rig,
+      onDoubleClick: (x, y) => this.handleDoubleClick(x, y),
+      onMouseMove: () => {},
+    });
 
     this.resize();
     window.addEventListener("resize", this.resize);
@@ -109,14 +117,16 @@ export class ToonGlobeApp {
     this.sun.position.copy(this.lightDir).multiplyScalar(10);
   }
 
+  // Quake hit-testing arrives with the quake layer (step 5).
+  private handleDoubleClick(_cssX: number, _cssY: number): void {}
+
   private resize = () => {
     const w = window.innerWidth;
     const h = window.innerHeight;
     const dprCap = this.embed ? 1.5 : 2;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, dprCap));
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this.rig.setViewport(w, h);
   };
 
   private tick = (now: number) => {
@@ -127,14 +137,19 @@ export class ToonGlobeApp {
     if (this.embed && now - this.lastRenderMs < 33) return;
     this.lastRenderMs = now;
 
-    this.planetGroup.rotation.y += (this.params.rotationSpeed * Math.PI) / 180;
+    this.rig.autoSpeed = this.params.rotationSpeed;
+    this.rig.update(now, false);
+    this.tiltGroup.rotation.x = this.rig.tiltRad();
+    this.spinGroup.rotation.y = this.rig.spinRad();
+
     this.planet.applyParams(this.params, this.lightDir);
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.rig.camera);
   };
 
   dispose(): void {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
+    this.detachControls();
     window.removeEventListener("resize", this.resize);
     document.removeEventListener("visibilitychange", this.onVisibility);
     this.planet.dispose();

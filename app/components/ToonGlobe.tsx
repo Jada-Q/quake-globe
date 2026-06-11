@@ -36,7 +36,7 @@ export default function ToonGlobe({
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const app = new ToonGlobeApp({ canvas, embed });
+    const app = new ToonGlobeApp({ canvas, region, embed });
     appRef.current = app;
     let disposePane: (() => void) | null = null;
     if (process.env.NODE_ENV === "development" && !embed) {
@@ -49,7 +49,7 @@ export default function ToonGlobe({
       disposePane?.();
       app.dispose();
     };
-  }, [embed]);
+  }, [embed, region]);
 
   // Data → GPU buffers (quake layer lands in step 5; refs are wired now so
   // the dependency shape is final).
