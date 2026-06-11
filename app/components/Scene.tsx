@@ -59,6 +59,7 @@ export default function Scene({
         />
       )}
       <Overlay
+        theme={theme}
         region={region}
         minMag={minMag}
         count={count}

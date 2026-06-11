@@ -12,7 +12,11 @@ const LAVA_GIST_RAW =
 // aggressively.
 const REFETCH_MS = 30 * 60_000;
 
-export default function LavaCaption() {
+export default function LavaCaption({
+  theme,
+}: {
+  theme: "toon" | "dark";
+}) {
   const [text, setText] = useState<string | null>(null);
 
   useEffect(() => {
@@ -62,10 +66,15 @@ export default function LavaCaption() {
 
   if (!text) return null;
 
+  const ink = theme === "toon";
+
   return (
     <div
-      className="pointer-events-none fixed bottom-32 left-1/2 z-10 hidden -translate-x-1/2 select-none px-4 text-center font-serif text-white md:block lg:bottom-40"
-      style={{ textShadow: "0 1px 4px rgba(0,0,0,0.55)" }}
+      className={
+        "pointer-events-none fixed bottom-32 left-1/2 z-10 hidden -translate-x-1/2 select-none px-4 text-center font-serif md:block lg:bottom-40 " +
+        (ink ? "text-[#22302c]" : "text-white")
+      }
+      style={ink ? undefined : { textShadow: "0 1px 4px rgba(0,0,0,0.55)" }}
     >
       <div className="mb-1 text-[10px] uppercase tracking-[0.25em] opacity-45">
         from the core

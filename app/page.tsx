@@ -40,7 +40,7 @@ export default async function Home({
         intro={intro}
       />
       <RegionSwitcher active={activeKey} theme={theme} />
-      <LavaCaption />
+      <LavaCaption theme={theme} />
     </main>
   );
 }

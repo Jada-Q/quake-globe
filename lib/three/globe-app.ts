@@ -11,9 +11,6 @@ import {
   DirectionalLight,
   Group,
   Mesh,
-  NearestFilter,
-  DataTexture,
-  RedFormat,
   Scene,
   Vector3,
   WebGLRenderer,
@@ -28,6 +25,7 @@ import {
   latLngToVec3,
   type QuakeLayer,
 } from "./quake-layer";
+import { buildClouds, type Clouds } from "./clouds";
 import type { Quake } from "@/lib/usgs";
 import type { Region } from "@/lib/regions";
 
@@ -54,6 +52,7 @@ export class ToonGlobeApp {
   private spinGroup = new Group();
   private planet: Planet;
   private quakeLayer: QuakeLayer;
+  private clouds: Clouds;
   private sun!: DirectionalLight;
   private lightDir = new Vector3(0, 0, 1);
   private detachControls: () => void;
@@ -97,6 +96,10 @@ export class ToonGlobeApp {
     this.spinGroup.add(this.planet.group);
     this.quakeLayer = buildQuakeLayer(this.epoch0);
     this.spinGroup.add(this.quakeLayer.group);
+    // Clouds live OUTSIDE the spin group — they drift on their own axes so
+    // the planet visibly rotates beneath them.
+    this.clouds = buildClouds();
+    this.tiltGroup.add(this.clouds.group);
 
     this.detachControls = attachControls({
       canvas,
@@ -111,21 +114,6 @@ export class ToonGlobeApp {
     window.addEventListener("resize", this.resize);
     document.addEventListener("visibilitychange", this.onVisibility);
     this.raf = requestAnimationFrame(this.tick);
-  }
-
-  /** 3×1 stepped gradient map for MeshToonMaterial-based props. */
-  static makeGradientMap(steps: number, shadeMul: number): DataTexture {
-    const n = Math.max(2, Math.round(steps));
-    const data = new Uint8Array(n);
-    for (let i = 0; i < n; i++) {
-      const t = n === 1 ? 1 : i / (n - 1);
-      data[i] = Math.round(255 * (shadeMul + (1 - shadeMul) * t));
-    }
-    const tex = new DataTexture(data, n, 1, RedFormat);
-    tex.minFilter = NearestFilter;
-    tex.magFilter = NearestFilter;
-    tex.needsUpdate = true;
-    return tex;
   }
 
   /** Place the sun + shader light from the shared azimuth/elevation params. */
@@ -232,6 +220,9 @@ export class ToonGlobeApp {
     this.rig.update(now, this.focusedQuake !== null);
     this.tiltGroup.rotation.x = this.rig.tiltRad();
     this.spinGroup.rotation.y = this.rig.spinRad();
+    // Alive feel: gentle bob + drifting cloud shells.
+    this.tiltGroup.position.y = Math.sin(now * 0.0004) * 0.012;
+    this.clouds.update(this.params.cloudSpeed);
 
     this.planet.applyParams(this.params, this.lightDir);
     this.quakeLayer.updateUniforms(
@@ -250,6 +241,7 @@ export class ToonGlobeApp {
     document.removeEventListener("visibilitychange", this.onVisibility);
     this.planet.dispose();
     this.quakeLayer.dispose();
+    this.clouds.dispose();
     this.scene.traverse((obj) => {
       if (obj instanceof Mesh) {
         obj.geometry.dispose();

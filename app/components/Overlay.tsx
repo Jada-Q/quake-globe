@@ -13,6 +13,7 @@ export default function Overlay({
   fallbackFromP2P,
   stale,
   staleSince,
+  theme,
 }: {
   region: Region;
   minMag: number;
@@ -22,6 +23,7 @@ export default function Overlay({
   fallbackFromP2P: boolean;
   stale: boolean;
   staleSince: number | null;
+  theme: "toon" | "dark";
 }) {
   const [now, setNow] = useState<Date | null>(null);
 
@@ -53,10 +55,15 @@ export default function Overlay({
   }).format(now);
   const tzAbbr = getTzAbbr(now, region.timezone);
 
+  const ink = theme === "toon";
+
   return (
     <div
-      className="pointer-events-none fixed inset-0 z-10 select-none text-white"
-      style={{ textShadow: "0 1px 4px rgba(0,0,0,0.55)" }}
+      className={
+        "pointer-events-none fixed inset-0 z-10 select-none " +
+        (ink ? "text-[#22302c]" : "text-white")
+      }
+      style={ink ? undefined : { textShadow: "0 1px 4px rgba(0,0,0,0.55)" }}
     >
       <div className="absolute left-6 top-6 font-serif tracking-wide md:left-10 md:top-10">
         <div className="text-xs uppercase tracking-[0.3em] opacity-60">
@@ -107,7 +114,12 @@ export default function Overlay({
           </div>
         ) : null}
         {stale ? (
-          <div className="mt-0.5 text-[10px] text-amber-300/70">
+          <div
+            className={
+              "mt-0.5 text-[10px] " +
+              (ink ? "text-[#2e5d66]" : "text-amber-300/70")
+            }
+          >
             {staleSince !== null
               ? `⚠️ offline · last known ${relativeAge(staleSince, now)}`
               : "⚠️ live feed delayed · showing cached"}
