@@ -26,6 +26,7 @@ import {
   type QuakeLayer,
 } from "./quake-layer";
 import { buildClouds, type Clouds } from "./clouds";
+import { buildPlanes, type Planes } from "./planes";
 import { buildIntroLetters, type IntroLetters } from "./intro-letters";
 import type { Quake } from "@/lib/usgs";
 import type { Region } from "@/lib/regions";
@@ -56,6 +57,7 @@ export class ToonGlobeApp {
   private planet: Planet;
   private quakeLayer: QuakeLayer;
   private clouds: Clouds;
+  private planes: Planes;
   private introLetters: IntroLetters | null = null;
   private onIntroExitDone: (() => void) | null = null;
   private sun!: DirectionalLight;
@@ -111,6 +113,8 @@ export class ToonGlobeApp {
     // the planet visibly rotates beneath them.
     this.clouds = buildClouds();
     this.tiltGroup.add(this.clouds.group);
+    this.planes = buildPlanes();
+    this.tiltGroup.add(this.planes.group);
 
     if (intro) {
       // Letters live at the scene root: they face the camera and hold still
@@ -251,6 +255,7 @@ export class ToonGlobeApp {
     // Alive feel: gentle bob + drifting cloud shells.
     this.tiltGroup.position.y = Math.sin(now * 0.0004) * 0.012;
     this.clouds.update(this.params.cloudSpeed);
+    this.planes.update(this.params.cloudSpeed);
 
     if (this.introLetters && this.introLetters.update(now)) {
       this.scene.remove(this.introLetters.group);
@@ -278,6 +283,7 @@ export class ToonGlobeApp {
     this.planet.dispose();
     this.quakeLayer.dispose();
     this.clouds.dispose();
+    this.planes.dispose();
     this.introLetters?.dispose();
     this.scene.traverse((obj) => {
       if (obj instanceof Mesh) {
