@@ -63,10 +63,15 @@ export default function ToonGlobe({
     // The hook may already hold data (region switch remount after a poll).
     app.setQuakes(quakesRef.current, firstSeenRef.current);
     let disposePane: (() => void) | null = null;
-    if (process.env.NODE_ENV === "development") {
+    // Tweakpane: always in dev; in production only behind ?debug=1 (lazy
+    // chunk — visitors without the flag never download it).
+    const debugFlag =
+      new URLSearchParams(window.location.search).get("debug") === "1";
+    const wantPane = process.env.NODE_ENV === "development" || debugFlag;
+    if (wantPane) {
       (window as unknown as { __toonApp?: ToonGlobeApp }).__toonApp = app;
     }
-    if (process.env.NODE_ENV === "development" && !embed) {
+    if (wantPane && !embed) {
       import("@/lib/three/debug-pane").then(async ({ mountDebugPane }) => {
         if (appRef.current === app) disposePane = await mountDebugPane(app);
       });
