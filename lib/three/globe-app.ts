@@ -26,6 +26,7 @@ import {
   type QuakeLayer,
 } from "./quake-layer";
 import { buildClouds, type Clouds } from "./clouds";
+import { buildIntroLetters, type IntroLetters } from "./intro-letters";
 import type { Quake } from "@/lib/usgs";
 import type { Region } from "@/lib/regions";
 
@@ -38,6 +39,8 @@ export interface ToonGlobeAppOptions {
   region: Region;
   /** Wallpaper mode: lower DPR cap, low-power GPU, 30fps throttle. */
   embed: boolean;
+  /** Show the voxel-letter intro (web only — the wallpaper skips it). */
+  intro?: boolean;
   /** Fired when focus mode is entered (quake + arrival time) or left (null). */
   onFocusChange?: (quake: Quake | null, arrivedAtMs: number) => void;
 }
@@ -53,6 +56,8 @@ export class ToonGlobeApp {
   private planet: Planet;
   private quakeLayer: QuakeLayer;
   private clouds: Clouds;
+  private introLetters: IntroLetters | null = null;
+  private onIntroExitDone: (() => void) | null = null;
   private sun!: DirectionalLight;
   private lightDir = new Vector3(0, 0, 1);
   private detachControls: () => void;
@@ -72,7 +77,13 @@ export class ToonGlobeApp {
     }
   };
 
-  constructor({ canvas, region, embed, onFocusChange }: ToonGlobeAppOptions) {
+  constructor({
+    canvas,
+    region,
+    embed,
+    intro,
+    onFocusChange,
+  }: ToonGlobeAppOptions) {
     this.embed = embed;
     this.onFocusChange = onFocusChange;
     this.renderer = new WebGLRenderer({
@@ -101,6 +112,13 @@ export class ToonGlobeApp {
     this.clouds = buildClouds();
     this.tiltGroup.add(this.clouds.group);
 
+    if (intro) {
+      // Letters live at the scene root: they face the camera and hold still
+      // while the planet rotates beneath them.
+      this.introLetters = buildIntroLetters();
+      this.scene.add(this.introLetters.group);
+    }
+
     this.detachControls = attachControls({
       canvas,
       rig: this.rig,
@@ -126,6 +144,16 @@ export class ToonGlobeApp {
       Math.cos(az) * Math.cos(el),
     );
     this.sun.position.copy(this.lightDir).multiplyScalar(10);
+  }
+
+  /** BEGIN pressed — fly the voxel letters off, then notify. */
+  startIntroExit(onDone: () => void): void {
+    if (!this.introLetters) {
+      onDone();
+      return;
+    }
+    this.onIntroExitDone = onDone;
+    this.introLetters.startExit(performance.now());
   }
 
   /** Re-upload quake instance buffers (called from React on poll). */
@@ -224,6 +252,14 @@ export class ToonGlobeApp {
     this.tiltGroup.position.y = Math.sin(now * 0.0004) * 0.012;
     this.clouds.update(this.params.cloudSpeed);
 
+    if (this.introLetters && this.introLetters.update(now)) {
+      this.scene.remove(this.introLetters.group);
+      this.introLetters.dispose();
+      this.introLetters = null;
+      this.onIntroExitDone?.();
+      this.onIntroExitDone = null;
+    }
+
     this.planet.applyParams(this.params, this.lightDir);
     this.quakeLayer.updateUniforms(
       (Date.now() - this.epoch0) / 1000,
@@ -242,6 +278,7 @@ export class ToonGlobeApp {
     this.planet.dispose();
     this.quakeLayer.dispose();
     this.clouds.dispose();
+    this.introLetters?.dispose();
     this.scene.traverse((obj) => {
       if (obj instanceof Mesh) {
         obj.geometry.dispose();

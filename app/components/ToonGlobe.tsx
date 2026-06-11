@@ -10,6 +10,7 @@ import { useQuakes, type QuakeStats } from "@/lib/use-quakes";
 import type { Quake } from "@/lib/usgs";
 import type { Region } from "@/lib/regions";
 import ToonBackdrop from "./ToonBackdrop";
+import IntroOverlay from "./IntroOverlay";
 
 const INFO_FADE_MS = 250;
 
@@ -34,6 +35,10 @@ export default function ToonGlobe({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const appRef = useRef<ToonGlobeApp | null>(null);
   const [focusInfo, setFocusInfo] = useState<FocusInfo | null>(null);
+  // "showing" → letters up, BEGIN visible; "exiting" → fly-off in flight.
+  const [introState, setIntroState] = useState<"showing" | "exiting" | "done">(
+    intro ? "showing" : "done",
+  );
 
   const { quakesRef, firstSeenRef, version } = useQuakes({
     region,
@@ -49,6 +54,7 @@ export default function ToonGlobe({
       canvas,
       region,
       embed,
+      intro,
       onFocusChange: (quake, arrivedAtMs) => {
         setFocusInfo(quake ? { quake, arrivedAtMs } : null);
       },
@@ -81,16 +87,25 @@ export default function ToonGlobe({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [version]);
 
-  void intro; // intro overlay lands in step 7
+  const handleBegin = () => {
+    setIntroState("exiting");
+    appRef.current?.startIntroExit(() => setIntroState("done"));
+  };
 
   return (
     <>
       <ToonBackdrop />
       <canvas
         ref={canvasRef}
-        className="fixed inset-0 h-full w-full cursor-grab active:cursor-grabbing"
+        className={
+          "fixed inset-0 h-full w-full " +
+          (introState === "done"
+            ? "cursor-grab active:cursor-grabbing"
+            : "pointer-events-none")
+        }
         aria-label={`Quake Globe — ${region.label}`}
       />
+      {introState === "showing" ? <IntroOverlay onBegin={handleBegin} /> : null}
       {focusInfo ? <ToonFocusCard info={focusInfo} /> : null}
     </>
   );
