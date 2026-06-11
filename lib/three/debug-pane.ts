@@ -13,6 +13,7 @@ export async function mountDebugPane(
   const f1 = pane.addFolder({ title: "shading" });
   f1.addBinding(p, "steps", { min: 2, max: 6, step: 1 });
   f1.addBinding(p, "shadeMul", { min: 0.3, max: 1, step: 0.01 });
+  f1.addBinding(p, "dayNight", { label: "day/night clock" });
   f1.addBinding(p, "lightAzimuth", { min: -180, max: 180, step: 1 });
   f1.addBinding(p, "lightElevation", { min: -60, max: 80, step: 1 });
 

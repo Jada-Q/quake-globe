@@ -30,13 +30,13 @@ const ROUTES = [
 ];
 
 /** CPU copy of the land mask R channel for sea/land lookups. */
-interface LandMask {
+export interface LandMask {
   data: Uint8ClampedArray;
   w: number;
   h: number;
 }
 
-async function loadLandMask(): Promise<LandMask | null> {
+export async function loadLandMask(): Promise<LandMask | null> {
   try {
     const res = await fetch("/textures/planet-mask.png");
     const bmp = await createImageBitmap(await res.blob());
@@ -56,7 +56,7 @@ async function loadLandMask(): Promise<LandMask | null> {
 
 /** True when (lat, lng) is open sea — with a safety margin so ships fade
  *  before visually touching the coastline (SDF 0.5 = coast; lower = sea). */
-function isSea(mask: LandMask, lat: number, lng: number): boolean {
+export function isSea(mask: LandMask, lat: number, lng: number): boolean {
   const u = (lng + 180) / 360;
   const v = 1 - (lat + 90) / 180;
   const px = Math.min(mask.w - 1, Math.max(0, Math.round(u * mask.w)));

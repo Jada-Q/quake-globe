@@ -37,6 +37,9 @@ export interface ToonParams {
   cloudSpeed: number; // cloud shell rotation multiplier
   lightAzimuth: number; // light direction azimuth (deg)
   lightElevation: number; // light direction elevation (deg)
+  /** Drive the sun from the viewer's local clock (overrides the two
+   *  sliders above while on). */
+  dayNight: boolean;
 }
 
 export function defaultToonParams(): ToonParams {
@@ -50,5 +53,6 @@ export function defaultToonParams(): ToonParams {
     cloudSpeed: 1.0,
     lightAzimuth: -35,
     lightElevation: 28,
+    dayNight: true,
   };
 }

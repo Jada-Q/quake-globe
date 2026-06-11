@@ -34,6 +34,7 @@ const FRAG = /* glsl */ `
   uniform vec3 uLand;
   uniform vec3 uVegetation;
   uniform vec3 uInk;
+  uniform vec3 uCityColor;
   uniform vec3 uLightDir;
   uniform float uInkWidth;
   uniform float uInkStrength;
@@ -46,6 +47,7 @@ const FRAG = /* glsl */ `
     vec4 m = texture2D(uMask, vUv);
     float d = m.r;   // land SDF, 0.5 = coastline
     float veg = m.g;
+    float city = m.b;
 
     float w = fwidth(d) * 1.2;
     float land = smoothstep(0.5 - w, 0.5 + w, d);
@@ -60,6 +62,11 @@ const FRAG = /* glsl */ `
     float band = floor(ndl * uSteps) / max(uSteps - 1.0, 1.0);
     band = clamp(band, 0.0, 1.0);
     vec3 color = albedo * mix(uShadeMul, 1.0, band);
+
+    // City lights bloom on the night side only (raw ndl, not banded —
+    // they should fade in smoothly as a region rolls into darkness).
+    float night = smoothstep(0.42, 0.18, ndl);
+    color += uCityColor * city * night * land;
 
     gl_FragColor = vec4(color, 1.0);
   }
@@ -87,6 +94,8 @@ export function buildPlanet(params: ToonParams): Planet {
       uLand: { value: new Color(PAPER) },
       uVegetation: { value: new Color(VEGETATION) },
       uInk: { value: new Color(INK) },
+      // Pale cream — deliberately NOT the golden accent (reserved for CTA).
+      uCityColor: { value: new Color("#efe7cf") },
       uLightDir: { value: new Vector3(0, 0, 1) },
       uInkWidth: { value: params.inkWidth },
       uInkStrength: { value: params.inkStrength },

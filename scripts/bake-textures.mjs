@@ -2,7 +2,7 @@
 // shader samples:
 //   R: land signed-distance field (0.5 = coastline, >0.5 inland, <0.5 sea)
 //   G: stylized vegetation mask (value noise × latitude bands, land only)
-//   B: unused (zero)
+//   B: city-light glow (gaussian splats at ~45 major cities, night side)
 //
 // Run: node scripts/bake-textures.mjs
 // Offline tool — never shipped to the client. Uses @napi-rs/canvas to
@@ -180,6 +180,84 @@ function buildVegetation(mask) {
   return veg;
 }
 
+// ------------------------------------------------------------ city lights --
+// Approximate [lat, lng, weight] of major metro areas — decorative glow
+// dots, not a population dataset. Weight scales the splat radius/intensity.
+const CITIES = [
+  [35.7, 139.7, 1.0], // Tokyo
+  [34.7, 135.5, 0.8], // Osaka
+  [37.6, 127.0, 0.9], // Seoul
+  [39.9, 116.4, 0.9], // Beijing
+  [31.2, 121.5, 1.0], // Shanghai
+  [23.1, 113.3, 0.9], // Guangzhou
+  [22.3, 114.2, 0.7], // Hong Kong
+  [25.0, 121.5, 0.6], // Taipei
+  [1.4, 103.8, 0.7], // Singapore
+  [13.8, 100.5, 0.8], // Bangkok
+  [-6.2, 106.8, 0.9], // Jakarta
+  [14.6, 121.0, 0.8], // Manila
+  [28.6, 77.2, 1.0], // Delhi
+  [19.1, 72.9, 0.9], // Mumbai
+  [22.6, 88.4, 0.7], // Kolkata
+  [24.9, 67.0, 0.8], // Karachi
+  [25.2, 55.3, 0.6], // Dubai
+  [35.7, 51.4, 0.8], // Tehran
+  [41.0, 28.9, 0.8], // Istanbul
+  [55.8, 37.6, 0.9], // Moscow
+  [30.0, 31.2, 0.9], // Cairo
+  [6.5, 3.4, 0.9], // Lagos
+  [-1.3, 36.8, 0.6], // Nairobi
+  [-26.2, 28.0, 0.7], // Johannesburg
+  [51.5, -0.1, 0.9], // London
+  [48.9, 2.3, 0.8], // Paris
+  [40.4, -3.7, 0.6], // Madrid
+  [52.5, 13.4, 0.6], // Berlin
+  [41.9, 12.5, 0.6], // Rome
+  [40.7, -74.0, 1.0], // New York
+  [43.7, -79.4, 0.6], // Toronto
+  [41.9, -87.6, 0.7], // Chicago
+  [29.8, -95.4, 0.6], // Houston
+  [19.4, -99.1, 0.9], // Mexico City
+  [34.1, -118.2, 0.9], // Los Angeles
+  [37.8, -122.4, 0.6], // San Francisco
+  [47.6, -122.3, 0.5], // Seattle
+  [4.7, -74.1, 0.6], // Bogotá
+  [-12.0, -77.0, 0.7], // Lima
+  [-33.4, -70.7, 0.6], // Santiago
+  [-34.6, -58.4, 0.8], // Buenos Aires
+  [-23.6, -46.6, 0.9], // São Paulo
+  [-22.9, -43.2, 0.7], // Rio de Janeiro
+  [-33.9, 151.2, 0.7], // Sydney
+  [-37.8, 145.0, 0.6], // Melbourne
+];
+
+function buildCityLights(mask) {
+  const city = new Float32Array(W * H);
+  for (const [lat, lng, weight] of CITIES) {
+    const cx = ((lng + 180) / 360) * W;
+    const cy = ((90 - lat) / 180) * H;
+    const radius = 5 + weight * 7;
+    const r2max = radius * radius;
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const r2 = dx * dx + dy * dy;
+        if (r2 > r2max) continue;
+        const x = (Math.round(cx + dx) + W) % W;
+        const y = Math.min(H - 1, Math.max(0, Math.round(cy + dy)));
+        const i = y * W + x;
+        if (!mask[i]) continue; // lights on land only
+        const g = weight * Math.exp(-r2 / (r2max * 0.22));
+        if (g > city[i]) city[i] = g;
+      }
+    }
+  }
+  const out = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) {
+    out[i] = Math.round(Math.min(1, city[i]) * 255);
+  }
+  return out;
+}
+
 // ------------------------------------------------------------------ main --
 console.time("rasterize");
 const mask = rasterizeLand();
@@ -193,13 +271,17 @@ console.time("vegetation");
 const veg = buildVegetation(mask);
 console.timeEnd("vegetation");
 
+console.time("cities");
+const city = buildCityLights(mask);
+console.timeEnd("cities");
+
 const out = createCanvas(W, H);
 const octx = out.getContext("2d");
 const img = octx.createImageData(W, H);
 for (let i = 0; i < W * H; i++) {
   img.data[i * 4] = sdf[i];
   img.data[i * 4 + 1] = veg[i];
-  img.data[i * 4 + 2] = 0;
+  img.data[i * 4 + 2] = city[i];
   img.data[i * 4 + 3] = 255;
 }
 octx.putImageData(img, 0, 0);

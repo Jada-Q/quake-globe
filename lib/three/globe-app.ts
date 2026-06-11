@@ -28,6 +28,9 @@ import {
 import { buildClouds, type Clouds } from "./clouds";
 import { buildPlanes, type Planes } from "./planes";
 import { buildShips, type Ships } from "./ships";
+import { buildBirds, type Birds } from "./birds";
+import { buildWhale, type Whale } from "./whale";
+import { buildSatellite, type Satellite } from "./satellite";
 import { buildIntroLetters, type IntroLetters } from "./intro-letters";
 import type { Quake } from "@/lib/usgs";
 import type { Region } from "@/lib/regions";
@@ -60,6 +63,9 @@ export class ToonGlobeApp {
   private clouds: Clouds;
   private planes: Planes;
   private ships: Ships;
+  private birds: Birds;
+  private whale: Whale;
+  private satellite: Satellite;
   private introLetters: IntroLetters | null = null;
   private onIntroExitDone: (() => void) | null = null;
   private sun!: DirectionalLight;
@@ -120,6 +126,13 @@ export class ToonGlobeApp {
     // Ships ride the planet's frame (they fade over land via the land mask).
     this.ships = buildShips();
     this.spinGroup.add(this.ships.group);
+    this.birds = buildBirds();
+    this.tiltGroup.add(this.birds.group);
+    // Whale surfaces at fixed deep-sea spots → planet frame.
+    this.whale = buildWhale();
+    this.spinGroup.add(this.whale.group);
+    this.satellite = buildSatellite();
+    this.tiltGroup.add(this.satellite.group);
 
     if (intro) {
       // Letters live at the scene root: they face the camera and hold still
@@ -153,6 +166,22 @@ export class ToonGlobeApp {
       Math.cos(az) * Math.cos(el),
     );
     this.sun.position.copy(this.lightDir).multiplyScalar(10);
+  }
+
+  /** Sun follows the viewer's local clock: east at sunrise, high at noon,
+   *  west at dusk, below the horizon at night (city lights take over).
+   *  Coarse and stylized on purpose — a mood cycle, not an ephemeris. */
+  private applyDayNight(): void {
+    const d = new Date();
+    const h = d.getHours() + d.getMinutes() / 60;
+    // Hour angle: noon = 0°, ±15°/hour (morning east / evening west).
+    this.params.lightAzimuth = (h - 12) * 15;
+    // Day arc peaks ~55° at noon, dips to -18° in deep night.
+    const dayT = Math.sin(((h - 6) / 12) * Math.PI); // >0 between 06–18
+    this.params.lightElevation = dayT > 0 ? 8 + dayT * 47 : -6 + dayT * 12;
+    // Props dim at night too (planet shader follows uLightDir on its own).
+    this.sun.intensity = 0.9 + Math.max(0, dayT) * 1.3;
+    this.applyLightDir();
   }
 
   /** BEGIN pressed — fly the voxel letters off, then notify. */
@@ -259,9 +288,13 @@ export class ToonGlobeApp {
     this.spinGroup.rotation.y = this.rig.spinRad();
     // Alive feel: gentle bob + drifting cloud shells.
     this.tiltGroup.position.y = Math.sin(now * 0.0004) * 0.012;
+    if (this.params.dayNight) this.applyDayNight();
     this.clouds.update(this.params.cloudSpeed);
     this.planes.update(this.params.cloudSpeed);
     this.ships.update(this.params.cloudSpeed);
+    this.birds.update(this.params.cloudSpeed, now);
+    this.whale.update(now);
+    this.satellite.update(this.params.cloudSpeed, now);
 
     if (this.introLetters && this.introLetters.update(now)) {
       this.scene.remove(this.introLetters.group);
@@ -291,6 +324,9 @@ export class ToonGlobeApp {
     this.clouds.dispose();
     this.planes.dispose();
     this.ships.dispose();
+    this.birds.dispose();
+    this.whale.dispose();
+    this.satellite.dispose();
     this.introLetters?.dispose();
     this.scene.traverse((obj) => {
       if (obj instanceof Mesh) {
