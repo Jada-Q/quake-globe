@@ -1,5 +1,6 @@
 import Scene from "./components/Scene";
 import RegionSwitcher from "./components/RegionSwitcher";
+import Bgm from "./components/Bgm";
 import LavaCaption from "./components/LavaCaption";
 import { resolveRegion, type UrlParams } from "@/lib/regions";
 
@@ -40,6 +41,7 @@ export default async function Home({
         intro={intro}
       />
       <RegionSwitcher active={activeKey} theme={theme} />
+      <Bgm regionKey={region.key} variant={activeKey} />
       <LavaCaption theme={theme} />
     </main>
   );
