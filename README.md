@@ -134,6 +134,11 @@ For multi-display: Pacific Rim on one monitor, Americas on another. The asynchro
 
 ---
 
+## Data credits
+
+- Coastlines / land mask (baked texture): [Natural Earth](https://www.naturalearthdata.com/) (public domain) via [world-atlas](https://www.npmjs.com/package/world-atlas) (ISC)
+- Earthquake feeds: [USGS](https://earthquake.usgs.gov/) (public domain) + [P2P地震情報](https://www.p2pquake.net/) API
+
 ## License
 
 MIT — do whatever you want, but if you ship a paid product literally cloned from this, at least drop a thank-you somewhere.
